@@ -193,10 +193,12 @@ public sealed class ThreeMfService
     static ZipArchiveEntry? FindModelEntry(ZipArchive zip) => zip.GetEntry("3D/3dmodel.model") ?? zip.Entries.FirstOrDefault(x => x.FullName.EndsWith(".model", StringComparison.OrdinalIgnoreCase));
     static XDocument LoadSecureXml(ZipArchiveEntry entry)
     {
+        var characterLimit = XmlCharacterLimit(entry.Length);
         using var stream = entry.Open();
-        using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 100_000_000, MaxCharactersFromEntities = 0 });
+        using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = characterLimit, MaxCharactersFromEntities = 0 });
         return XDocument.Load(reader, LoadOptions.None);
     }
+    internal static long XmlCharacterLimit(long entryLength) => Math.Min(MaxUncompressed, Math.Max(100_000_000L, entryLength > MaxUncompressed - 1_000_000L ? MaxUncompressed : entryLength + 1_000_000L));
     static double Number(XElement element, string name) => double.Parse(element.Attribute(name)?.Value ?? "0", NumberStyles.Float, CultureInfo.InvariantCulture);
     static int Integer(XElement element, string name) => int.Parse(element.Attribute(name)?.Value ?? "-1", NumberStyles.Integer, CultureInfo.InvariantCulture);
     internal static double UnitToMillimeters(string unit) => unit.ToLowerInvariant() switch { "micron" => .001, "centimeter" => 10, "inch" => 25.4, "foot" => 304.8, "meter" => 1000, _ => 1 };

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.9
+
+- Prise en charge des grands fragments XML 3MF dépassant 100 millions de caractères.
+- Limite XML ajustée à la taille réelle de chaque fragment tout en conservant le plafond global anti-décompression abusive.
+- Compatibilité validée avec `samraii-frogggg.3mf` sans modifier le fichier original.
+
 ## 1.6.8
 
 - Correction du numéro de version intégré aux métadonnées de l'installateur Windows.
