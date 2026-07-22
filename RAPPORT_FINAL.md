@@ -1,4 +1,4 @@
-# Rapport final — PolyChrom 3MF 1.6.6
+# Rapport final — PolyChrom 3MF 1.6.7
 
 - Snapmaker Orca détecté automatiquement par son exécutable officiel, ses dossiers d'installation, le registre Windows ou un chemin choisi manuellement.
 - Version installée du slicer affichée lorsqu'elle est disponible.

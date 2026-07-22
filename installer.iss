@@ -31,3 +31,4 @@ Name: "{autodesktop}\\PolyChrom 3MF"; Filename: "{app}\\PolyChrom3MF.exe"; Tasks
 
 [Run]
 Filename: "{app}\\PolyChrom3MF.exe"; Description: "Lancer PolyChrom 3MF"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\\PolyChrom3MF.exe"; Flags: nowait skipifnotsilent

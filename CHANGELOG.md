@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.7
+
+- Recherche automatique des mises à jour au démarrage.
+- Demande de confirmation avant téléchargement et installation.
+- Téléchargement en arrière-plan avec barre de progression et pourcentage.
+- Vérification de la taille et de l'empreinte SHA-256 publiée par GitHub.
+- Installation silencieuse, fermeture propre et redémarrage automatique de PolyChrom 3MF.
+
 ## 1.6.6
 
 - Correction de la fenêtre de sélection du nombre de couleurs dont le bouton inférieur pouvait être coupé.

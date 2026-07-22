@@ -34,7 +34,7 @@ public partial class MainWindow : Window
     ColorProposal? _selected;
     System.Windows.Point _last;
     double _yaw = -40, _pitch = -25, _zoom = 1;
-    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true;
+    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked;
     int _generation, _colorCount = 4;
     string? _lastSlicerFile;
     Point3D _center;
@@ -59,6 +59,7 @@ public partial class MainWindow : Window
                 if (Path.GetExtension(startupFile).Equals(".poly3mf", StringComparison.OrdinalIgnoreCase)) await LoadProject(startupFile);
                 else await LoadModel(startupFile);
             }
+            if (!_automaticUpdateChecked) { _automaticUpdateChecked = true; await CheckForUpdatesAsync(true); }
         };
     }
 
@@ -474,28 +475,41 @@ public partial class MainWindow : Window
     }
     void ShowWelcome() { var dialog = new WelcomeWindow { Owner = this }; dialog.ShowDialog(); _settings.ShowWelcome = dialog.ShowAtStartup; _settingsService.Save(_settings); }
     void Welcome_Click(object sender, RoutedEventArgs e) => ShowWelcome();
-    async void Update_Click(object sender, RoutedEventArgs e)
+    async void Update_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(false);
+
+    async Task CheckForUpdatesAsync(bool automatic)
     {
-        IsEnabled = false; StatusText.Text = "Recherche d’une mise à jour…";
+        if (!automatic) { IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = true; StatusText.Text = "Recherche d’une mise à jour…"; }
         try
         {
             var update = await _updateService.GetAvailableUpdateAsync();
             if (update is null)
             {
                 StatusText.Text = "PolyChrom 3MF est à jour.";
-                MessageBox.Show($"Vous utilisez déjà la dernière version ({UpdateService.CurrentVersion().ToString(3)}).", "Mise à jour", MessageBoxButton.OK, MessageBoxImage.Information);
+                if (!automatic) MessageBox.Show($"Vous utilisez déjà la dernière version ({UpdateService.CurrentVersion().ToString(3)}).", "Mise à jour", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-            var open = MessageBox.Show($"La version {update.Version.ToString(3)} est disponible.\n\nOuvrir la page de téléchargement sécurisée sur GitHub ?", "Mise à jour disponible", MessageBoxButton.YesNo, MessageBoxImage.Information);
-            if (open == MessageBoxResult.Yes) Process.Start(new ProcessStartInfo(update.ReleaseUrl) { UseShellExecute = true });
-            StatusText.Text = $"Mise à jour {update.Tag} disponible.";
+            var install = MessageBox.Show($"La version {update.Version.ToString(3)} est disponible.\n\nLa télécharger et l’installer maintenant en arrière-plan ?", "Mise à jour disponible", MessageBoxButton.YesNo, MessageBoxImage.Information);
+            if (install != MessageBoxResult.Yes) { StatusText.Text = $"Mise à jour {update.Tag} reportée."; return; }
+            if (_dirty && MessageBox.Show("Le logiciel devra redémarrer. Les modifications non enregistrées seront perdues. Continuer ?", "Enregistrer avant la mise à jour", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+
+            IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = false; Progress.Minimum = 0; Progress.Maximum = 100; Progress.Value = 0;
+            var progress = new Progress<double>(value => { Progress.Value = value; StatusText.Text = $"Téléchargement de la mise à jour… {value:0}%"; });
+            var installer = await _updateService.DownloadInstallerAsync(update, progress);
+            MessageBox.Show("La mise à jour a été téléchargée et vérifiée.\n\nPolyChrom 3MF va maintenant se fermer, installer la nouvelle version en silence, puis redémarrer automatiquement.", "Redémarrage après mise à jour", MessageBoxButton.OK, MessageBoxImage.Information);
+            _ = Process.Start(new ProcessStartInfo(installer)
+            {
+                UseShellExecute = true,
+                ArgumentList = { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS" }
+            }) ?? throw new InvalidOperationException("Impossible de démarrer l’installateur de mise à jour.");
+            System.Windows.Application.Current.Shutdown();
         }
         catch (Exception ex)
         {
             StatusText.Text = "Recherche de mise à jour impossible.";
-            MessageBox.Show($"Impossible de vérifier les mises à jour pour le moment.\n\n{ex.Message}", "Mise à jour", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (!automatic) MessageBox.Show($"Impossible de mettre à jour le logiciel pour le moment.\n\n{ex.Message}", "Mise à jour", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        finally { IsEnabled = true; }
+        finally { IsEnabled = true; Progress.Visibility = Visibility.Collapsed; Progress.IsIndeterminate = true; }
     }
     void About_Click(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return; if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e); }

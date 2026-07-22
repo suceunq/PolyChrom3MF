@@ -1,4 +1,4 @@
-# PolyChrom 3MF 1.6.6
+# PolyChrom 3MF 1.6.7
 
 Application Windows française et locale pour analyser, visualiser et colorer des fichiers 3MF ou STL sans modifier leur géométrie. Au démarrage, l’utilisateur choisit de 4 à 32 couleurs ; l’application génère quatre propositions, permet les ajustements manuels et contrôle automatiquement chaque export.
 
@@ -23,7 +23,7 @@ Application Windows française et locale pour analyser, visualiser et colorer de
 - Choix de 4 à 32 couleurs au démarrage, modifiable ensuite depuis la barre d’outils.
 - Palettes et motifs réellement étendus au nombre choisi, avec export de tous les matériaux 3MF.
 - Menus Fichier, Édition, Affichage et Aide au style Windows standard.
-- Recherche des nouvelles versions depuis les Releases GitHub officielles, accessible dans Aide > Rechercher une mise à jour.
+- Détection automatique des nouvelles versions au démarrage, téléchargement vérifié avec barre de progression, installation silencieuse et redémarrage automatique.
 - Fenêtre « À propos » créditant 3D TER avec un lien TikTok cliquable.
 - Annuler/rétablir, projets `.poly3mf`, thèmes clair/sombre et assistant de bienvenue.
 - Export 3MF standard `basematerials`, géométrie source préservée et validation par réouverture.
