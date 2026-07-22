@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.6
+
+- Correction de la fenêtre de sélection du nombre de couleurs dont le bouton inférieur pouvait être coupé.
+- Hauteur calculée automatiquement selon le contenu et la mise à l'échelle Windows.
+- Ajout d'un défilement vertical de secours pour les petits écrans.
+
 ## 1.6.5
 
 - Activation de la recherche de mises à jour depuis les Releases GitHub officielles.
