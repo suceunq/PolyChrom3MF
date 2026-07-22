@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.10
+
+- Suppression de l'effet transparent sur les modèles dépassant 500 000 triangles : aucune face n'est désormais retirée de l'aperçu.
+- Construction du rendu multicolore en un seul parcours des triangles et gel des ressources WPF pour conserver de bonnes performances.
+- Correction du bouton « Fermer » coupé dans la fenêtre « À propos » avec hauteur automatique et défilement de secours.
+
 ## 1.6.9
 
 - Prise en charge des grands fragments XML 3MF dépassant 100 millions de caractères.

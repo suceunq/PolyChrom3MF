@@ -84,7 +84,7 @@ public partial class MainWindow : Window
             _generation = 0;
             GenerateProposals();
             HintText.Visibility = Visibility.Collapsed;
-            StatsText.Text = $"{_doc.Objects.Count} objets · {_doc.TriangleCount:N0} triangles · {_selected?.Colors.Count ?? 0} couleurs" + (_doc.TriangleCount > 500_000 ? " · aperçu allégé" : "");
+            StatsText.Text = $"{_doc.Objects.Count} objets · {_doc.TriangleCount:N0} triangles · {_selected?.Colors.Count ?? 0} couleurs";
             ComputeBounds();
             FitCamera();
             Render();
@@ -384,21 +384,28 @@ public partial class MainWindow : Window
         foreach (var obj in _doc.Objects)
         {
             var positions = new Point3DCollection(obj.Vertices.Select(v => new Point3D(v.X, v.Y, v.Z)));
-            var displayStep = Math.Max(1, (int)Math.Ceiling(obj.Triangles.Count / 500_000d));
+            positions.Freeze();
             var triangleColors = _selected?.TriangleAssignments.GetValueOrDefault(obj.Index);
-            for (var colorIndex = 0; colorIndex < Math.Max(1, _selected?.Colors.Count ?? 1); colorIndex++)
+            var colorCount = Math.Max(1, _selected?.Colors.Count ?? 1);
+            var capacity = Math.Max(3, obj.Triangles.Count * 3 / colorCount);
+            var indicesByColor = Enumerable.Range(0, colorCount).Select(_ => new Int32Collection(capacity)).ToArray();
+            for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
             {
-                var mesh = new MeshGeometry3D { Positions = positions };
-                for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex += displayStep)
-                {
-                    var assigned = triangleColors is not null && triangleIndex < triangleColors.Length ? triangleColors[triangleIndex] : _selected?.Assignments.GetValueOrDefault(obj.Index, 0) ?? 0;
-                    if (assigned != colorIndex) continue;
-                    var triangle = obj.Triangles[triangleIndex]; mesh.TriangleIndices.Add(triangle.A); mesh.TriangleIndices.Add(triangle.B); mesh.TriangleIndices.Add(triangle.C);
-                }
-                if (mesh.TriangleIndices.Count == 0) continue;
+                var assigned = triangleColors is not null && triangleIndex < triangleColors.Length ? triangleColors[triangleIndex] : _selected?.Assignments.GetValueOrDefault(obj.Index, 0) ?? 0;
+                assigned = Math.Clamp(assigned, 0, colorCount - 1);
+                var triangle = obj.Triangles[triangleIndex];
+                indicesByColor[assigned].Add(triangle.A); indicesByColor[assigned].Add(triangle.B); indicesByColor[assigned].Add(triangle.C);
+            }
+            for (var colorIndex = 0; colorIndex < colorCount; colorIndex++)
+            {
+                if (indicesByColor[colorIndex].Count == 0) continue;
+                indicesByColor[colorIndex].Freeze();
+                var mesh = new MeshGeometry3D { Positions = positions, TriangleIndices = indicesByColor[colorIndex] };
+                mesh.Freeze();
                 var color = _selected?.Colors.ElementAtOrDefault(colorIndex)?.Color ?? Colors.SlateGray;
                 if (ObjectsList.SelectedIndex == obj.Index) color = Color.Multiply(color, 1.12f);
-                var material = new DiffuseMaterial(new SolidColorBrush(color));
+                var brush = new SolidColorBrush(color); brush.Freeze();
+                var material = new DiffuseMaterial(brush); material.Freeze();
                 var model = new GeometryModel3D(mesh, material) { BackMaterial = material };
                 _modelObjects[model] = obj.Index;
                 Viewer.Children.Add(new ModelVisual3D { Content = model });
