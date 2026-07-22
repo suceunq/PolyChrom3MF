@@ -1,7 +1,7 @@
-# Rapport de tests — PolyChrom 3MF 1.6.10
+# Rapport de tests — PolyChrom 3MF 1.6.11
 
 - Compilation Release : réussie, 0 erreur, 0 avertissement.
-- Tests automatisés : **38/38 réussis**, 0 échec, incluant grands fragments 3MF, génération de huit couleurs distinctes, export sécurisé, projet portable relu après suppression du modèle source, détection de Snapmaker Orca et validation cryptographique des mises à jour GitHub.
+- Tests automatisés : **40/40 réussis**, 0 échec, incluant grands fragments 3MF, génération de huit couleurs distinctes, export sécurisé, projet portable relu après suppression du modèle source, projets malformés refusés, détection de Snapmaker Orca et validation cryptographique des mises à jour GitHub.
 - Projet partagé `.poly3mf` : modèle 3MF intégré, deux objets et toutes les affectations restaurés sans dépendre du fichier source original.
 - Eniac à huit couleurs : 500 000 triangles répartis sur les huit indices ; dimensions inchangées et maillage manifold dans PrusaSlicer 2.9.6.
 - Test d’intégration réel : PrusaSlicer 2.9.6 détecté automatiquement puis lancé depuis PolyChrom avec Eniac chargé.

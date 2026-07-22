@@ -71,7 +71,7 @@ public sealed class ProjectService
     static ProjectData LoadPortable(string projectPath, Stream input)
     {
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
-        if (archive.Entries.Count is < 2 or > 4) throw new InvalidDataException("Le projet PolyChrom contient des fichiers inattendus.");
+        if (archive.Entries.Count != 2) throw new InvalidDataException("Le projet PolyChrom contient des fichiers inattendus.");
         var settings = archive.GetEntry("project.json") ?? throw new InvalidDataException("Les réglages du projet sont absents.");
         if (settings.Length <= 0 || settings.Length > MaxSettingsSize) throw new InvalidDataException("Les réglages du projet sont invalides ou trop volumineux.");
         ProjectData data;
@@ -113,14 +113,14 @@ public sealed class ProjectService
 
     static void Validate(ProjectData data)
     {
-        if (string.IsNullOrWhiteSpace(data.SourcePath) || data.Proposals.Count is < 1 or > 4 || data.SelectedProposal < 0 || data.SelectedProposal >= data.Proposals.Count || data.ColorCount is < 4 or > 32 || !double.IsFinite(data.Yaw) || !double.IsFinite(data.Pitch) || !double.IsFinite(data.Zoom) || data.Zoom <= 0)
+        if (data is null || string.IsNullOrWhiteSpace(data.SourcePath) || data.Proposals is null || data.Assignments is null || data.Proposals.Count is < 1 or > 4 || data.Assignments.Count > 4 || data.TriangleAssignments?.Count > 4 || data.SelectedProposal < 0 || data.SelectedProposal >= data.Proposals.Count || data.ColorCount is < 4 or > 32 || !double.IsFinite(data.Yaw) || !double.IsFinite(data.Pitch) || !double.IsFinite(data.Zoom) || data.Zoom <= 0)
             throw new InvalidDataException("Le projet contient des paramètres invalides.");
         for (var p = 0; p < data.Proposals.Count; p++)
         {
             var colors = data.Proposals[p];
-            if (colors.Count is < 4 or > 32 || colors.Any(color => !Regex.IsMatch(color ?? "", "^#[0-9A-Fa-f]{6}$"))) throw new InvalidDataException("Le projet contient une palette invalide.");
-            if (p < data.Assignments.Count && data.Assignments[p].Values.Any(value => value < 0 || value >= colors.Count)) throw new InvalidDataException("Le projet contient une affectation de couleur invalide.");
-            if (data.TriangleAssignments is not null && p < data.TriangleAssignments.Count && data.TriangleAssignments[p].Values.SelectMany(values => values).Any(value => value < 0 || value >= colors.Count)) throw new InvalidDataException("Le projet contient une affectation de triangle invalide.");
+            if (colors is null || colors.Count is < 4 or > 32 || colors.Any(color => !Regex.IsMatch(color ?? "", "^#[0-9A-Fa-f]{6}$"))) throw new InvalidDataException("Le projet contient une palette invalide.");
+            if (p < data.Assignments.Count && (data.Assignments[p] is null || data.Assignments[p].Any(pair => pair.Key < 0 || pair.Value < 0 || pair.Value >= colors.Count))) throw new InvalidDataException("Le projet contient une affectation de couleur invalide.");
+            if (data.TriangleAssignments is not null && p < data.TriangleAssignments.Count && (data.TriangleAssignments[p] is null || data.TriangleAssignments[p].Any(pair => pair.Key < 0 || pair.Value is null || pair.Value.Any(value => value < 0 || value >= colors.Count)))) throw new InvalidDataException("Le projet contient une affectation de triangle invalide.");
         }
     }
 

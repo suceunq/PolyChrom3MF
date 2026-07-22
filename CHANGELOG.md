@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.11
+
+- Durcissement de la lecture des projets partagés face aux réglages absents, aux affectations invalides et aux fichiers inattendus dans l'archive.
+- Ouverture directe d'un projet `.poly3mf` sans redemander le nombre de couleurs afin de restaurer immédiatement le partage à l'identique.
+- Texte de secours garanti lorsque GitHub ne fournit pas de résumé exploitable pour une mise à jour.
+- Mise à niveau complète de la chaîne de tests afin de supprimer deux dépendances transitives signalées comme vulnérables.
+
 ## 1.6.10
 
 - Suppression de l'effet transparent sur les modèles dépassant 500 000 triangles : aucune face n'est désormais retirée de l'aperçu.

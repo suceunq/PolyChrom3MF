@@ -51,9 +51,9 @@ public partial class MainWindow : Window
         ApplyTheme();
         ContentRendered += async (_, _) =>
         {
-            if (_settings.ShowWelcome) ShowWelcome();
-            ChooseColorCount(false);
             var startupFile = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(File.Exists);
+            if (_settings.ShowWelcome) ShowWelcome();
+            if (startupFile is null || !Path.GetExtension(startupFile).Equals(".poly3mf", StringComparison.OrdinalIgnoreCase)) ChooseColorCount(false);
             if (startupFile is not null && new[] { ".3mf", ".stl", ".poly3mf" }.Contains(Path.GetExtension(startupFile), StringComparer.OrdinalIgnoreCase))
             {
                 if (Path.GetExtension(startupFile).Equals(".poly3mf", StringComparison.OrdinalIgnoreCase)) await LoadProject(startupFile);

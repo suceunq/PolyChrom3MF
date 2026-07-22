@@ -1,4 +1,4 @@
-# Rapport final — PolyChrom 3MF 1.6.10
+# Rapport final — PolyChrom 3MF 1.6.11
 
 Les projets `.poly3mf` sont portables et peuvent être partagés comme un fichier unique contenant le modèle 3D et tous les réglages de coloration.
 

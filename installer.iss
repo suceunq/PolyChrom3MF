@@ -1,6 +1,6 @@
 [Setup]
 AppName=PolyChrom 3MF
-AppVersion=1.6.10
+AppVersion=1.6.11
 AppPublisher=bob59
 DefaultDirName={localappdata}\Programs\PolyChrom 3MF
 DefaultGroupName=PolyChrom 3MF

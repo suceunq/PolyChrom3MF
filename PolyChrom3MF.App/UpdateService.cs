@@ -107,6 +107,7 @@ public sealed class UpdateService
             .Where(line => line.Length > 0 && !line.StartsWith("**Full Changelog**", StringComparison.OrdinalIgnoreCase))
             .Take(8);
         var summary = string.Join(Environment.NewLine, lines);
+        if (string.IsNullOrWhiteSpace(summary)) return "Améliorations et corrections de stabilité.";
         return summary.Length <= 1000 ? summary : summary[..997] + "…";
     }
 
