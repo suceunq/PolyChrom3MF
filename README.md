@@ -2,6 +2,11 @@
 
 Application Windows française et locale pour analyser, visualiser et colorer des fichiers 3MF ou STL sans modifier leur géométrie. Au démarrage, l’utilisateur choisit de 4 à 32 couleurs ; l’application génère quatre propositions, permet les ajustements manuels et contrôle automatiquement chaque export.
 
+## Télécharger
+
+- [Dernière version stable et installateur Windows](https://github.com/suceunq/PolyChrom3MF/releases/latest)
+- [Code source et suivi du projet](https://github.com/suceunq/PolyChrom3MF)
+
 ## Fonctions
 
 - Import 3MF et STL (ASCII ou binaire) par boîte de dialogue ou glisser-déposer.
