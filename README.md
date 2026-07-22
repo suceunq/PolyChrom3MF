@@ -25,7 +25,8 @@ Application Windows française et locale pour analyser, visualiser et colorer de
 - Menus Fichier, Édition, Affichage et Aide au style Windows standard.
 - Détection automatique des nouvelles versions au démarrage, téléchargement vérifié avec barre de progression, installation silencieuse et redémarrage automatique.
 - Fenêtre « À propos » créditant 3D TER avec un lien TikTok cliquable.
-- Annuler/rétablir, projets `.poly3mf`, thèmes clair/sombre et assistant de bienvenue.
+- Annuler/rétablir et projets portables `.poly3mf` réunissant dans un fichier partageable le modèle 3D, les propositions, les palettes, les motifs et la vue exacte.
+- Ouverture des projets `.poly3mf` par double-clic, glisser-déposer ou menu Fichier, avec compatibilité des anciens projets.
 - Export 3MF standard `basematerials`, géométrie source préservée et validation par réouverture.
 
 ## Compilation

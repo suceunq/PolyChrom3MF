@@ -138,12 +138,16 @@ public partial class MainWindow : Window
 
     void Window_Drop(object sender, System.Windows.DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files || files.Length != 1 || !new[] { ".3mf", ".stl" }.Contains(Path.GetExtension(files[0]), StringComparer.OrdinalIgnoreCase))
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files || files.Length != 1 || !new[] { ".3mf", ".stl", ".poly3mf" }.Contains(Path.GetExtension(files[0]), StringComparer.OrdinalIgnoreCase))
         {
-            MessageBox.Show("Déposez un unique fichier .3mf ou .stl.", "Format non pris en charge");
+            MessageBox.Show("Déposez un unique fichier .3mf, .stl ou .poly3mf.", "Format non pris en charge");
             return;
         }
-        if (ConfirmDiscard()) _ = LoadModel(files[0]);
+        if (ConfirmDiscard())
+        {
+            if (Path.GetExtension(files[0]).Equals(".poly3mf", StringComparison.OrdinalIgnoreCase)) _ = LoadProject(files[0]);
+            else _ = LoadModel(files[0]);
+        }
     }
 
     void Proposal_Click(object sender, MouseButtonEventArgs e)
@@ -305,7 +309,7 @@ public partial class MainWindow : Window
         try
         {
             _projects.Save(dialog.FileName, _doc, _proposals, _proposals.IndexOf(_selected!), _yaw, _pitch, _zoom, _generation, _funMode, _colorCount);
-            _dirty = false; StatusText.Text = "Projet enregistré.";
+            _dirty = false; StatusText.Text = "Projet portable enregistré : modèle et styles sont réunis dans un seul fichier.";
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Projet impossible à enregistrer", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
@@ -496,7 +500,7 @@ public partial class MainWindow : Window
                 if (!automatic) MessageBox.Show($"Vous utilisez déjà la dernière version ({UpdateService.CurrentVersion().ToString(3)}).", "Mise à jour", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-            var install = MessageBox.Show($"La version {update.Version.ToString(3)} est disponible.\n\nLa télécharger et l’installer maintenant en arrière-plan ?", "Mise à jour disponible", MessageBoxButton.YesNo, MessageBoxImage.Information);
+            var install = MessageBox.Show($"La version {update.Version.ToString(3)} est disponible.\n\nNouveautés :\n{update.ReleaseNotes}\n\nLa télécharger et l’installer maintenant en arrière-plan ?", "Mise à jour disponible", MessageBoxButton.YesNo, MessageBoxImage.Information);
             if (install != MessageBoxResult.Yes) { StatusText.Text = $"Mise à jour {update.Tag} reportée."; return; }
             if (_dirty && MessageBox.Show("Le logiciel devra redémarrer. Les modifications non enregistrées seront perdues. Continuer ?", "Enregistrer avant la mise à jour", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 

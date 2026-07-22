@@ -6,7 +6,7 @@ using System.Text.Json;
 
 namespace PolyChrom3MF.App;
 
-public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, string InstallerUrl, string Sha256, long Size);
+public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, string InstallerUrl, string Sha256, long Size, string ReleaseNotes);
 
 public sealed class UpdateService
 {
@@ -88,7 +88,8 @@ public sealed class UpdateService
         var size = asset.GetProperty("size").GetInt64();
         if (!digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) || digest.Length != 71 || !digest[7..].All(Uri.IsHexDigit)) throw new InvalidDataException("Signature SHA-256 GitHub invalide.");
         if (size <= 0 || size > 250L * 1024 * 1024) throw new InvalidDataException("Taille de mise à jour invalide.");
-        return new UpdateInfo(version, tag, releaseUrl, installerUrl, digest[7..].ToUpperInvariant(), size);
+        var notes = root.TryGetProperty("body", out var body) ? ReleaseSummary(body.GetString()) : "Améliorations et corrections de stabilité.";
+        return new UpdateInfo(version, tag, releaseUrl, installerUrl, digest[7..].ToUpperInvariant(), size, notes);
     }
 
     static string ValidatedGitHubUrl(string? value, string error)
@@ -96,6 +97,17 @@ public sealed class UpdateService
         var url = value?.Trim() ?? throw new InvalidDataException(error);
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException(error);
         return url;
+    }
+
+    internal static string ReleaseSummary(string? markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown)) return "Améliorations et corrections de stabilité.";
+        var lines = markdown.Replace("\r", "").Split('\n')
+            .Select(line => line.Trim().TrimStart('#').Trim())
+            .Where(line => line.Length > 0 && !line.StartsWith("**Full Changelog**", StringComparison.OrdinalIgnoreCase))
+            .Take(8);
+        var summary = string.Join(Environment.NewLine, lines);
+        return summary.Length <= 1000 ? summary : summary[..997] + "…";
     }
 
     internal static bool DigestMatches(string actual, string expected) => CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actual), Convert.FromHexString(expected));

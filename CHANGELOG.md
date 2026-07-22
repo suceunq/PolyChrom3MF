@@ -5,6 +5,9 @@
 - Suppression de l'effet transparent sur les modèles dépassant 500 000 triangles : aucune face n'est désormais retirée de l'aperçu.
 - Construction du rendu multicolore en un seul parcours des triangles et gel des ressources WPF pour conserver de bonnes performances.
 - Correction du bouton « Fermer » coupé dans la fenêtre « À propos » avec hauteur automatique et défilement de secours.
+- Les projets `.poly3mf` sont désormais entièrement portables : ils embarquent le modèle 3MF/STL, les quatre propositions, les palettes, les motifs et la vue.
+- Ouverture d'un projet partagé par double-clic, par glisser-déposer ou depuis le menu Fichier ; les anciens projets restent compatibles.
+- La proposition de mise à jour affiche maintenant un résumé des changements avant le téléchargement.
 
 ## 1.6.9
 
