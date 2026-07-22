@@ -1,0 +1,39 @@
+name: Publier une version Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Récupérer les sources
+        uses: actions/checkout@v4
+
+      - name: Installer .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Tester
+        run: dotnet test PolyChrom3MF.sln -c Release
+
+      - name: Publier l'application autonome
+        run: dotnet publish PolyChrom3MF.App/PolyChrom3MF.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/PolyChrom3MF_1.1
+
+      - name: Installer Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Construire l'installateur
+        run: iscc installer.iss
+
+      - name: Créer la Release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: LIVRAISON_FINALE/Installateur/PolyChrom3MF_Setup_x64.exe

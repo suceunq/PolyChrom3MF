@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+publish/
+LIVRAISON_FINALE/
+.vs/
+.idea/
+*.user
+*.suo
+*.tmp
+temp-state.png
+ui-*.png
+
