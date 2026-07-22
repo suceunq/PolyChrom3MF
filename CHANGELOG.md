@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.8
+
+- Correction du numéro de version intégré aux métadonnées de l'installateur Windows.
+- Publication consolidée du nouveau système de mise à jour automatique.
+
 ## 1.6.7
 
 - Recherche automatique des mises à jour au démarrage.

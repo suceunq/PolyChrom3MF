@@ -1,4 +1,4 @@
-# Rapport de tests — PolyChrom 3MF 1.6.7
+# Rapport de tests — PolyChrom 3MF 1.6.8
 
 - Compilation Release : réussie, 0 erreur, 0 avertissement.
 - Tests automatisés : **37/37 réussis**, 0 échec, incluant génération de huit couleurs distinctes, export sécurisé sur le fichier source, conservation complète des projets, détection de Snapmaker Orca et validation cryptographique des mises à jour GitHub.
