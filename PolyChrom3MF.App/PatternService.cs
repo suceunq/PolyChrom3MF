@@ -12,9 +12,6 @@ public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTri
 
 public sealed class PatternService
 {
-    const long MaxPngBytes = 32L * 1024 * 1024;
-    const long MaxPixels = 16_000_000;
-
     public PatternApplyResult Apply(ModelDocument document, ColorProposal proposal, PatternSettings settings, PatternMode? modeOverride = null)
     {
         ValidateSettings(settings);
@@ -55,24 +52,102 @@ public sealed class PatternService
     public static void ValidateSettings(PatternSettings settings)
     {
         if (settings is null || string.IsNullOrWhiteSpace(settings.ImagePath) || settings.ImagePath.Length > 1024 || !Enum.IsDefined(settings.Mode) || !double.IsFinite(settings.Scale) || settings.Scale is < 10 or > 400 || !double.IsFinite(settings.Rotation) || settings.Rotation is < -180 or > 180 || !double.IsFinite(settings.OffsetX) || settings.OffsetX is < -200 or > 200 || !double.IsFinite(settings.OffsetY) || settings.OffsetY is < -200 or > 200 || settings.TargetObject < -1 || settings.DisplayName?.Length > 260 || settings.DisplayName?.Any(char.IsControl) == true)
-            throw new InvalidDataException("Les réglages du motif PNG sont invalides.");
+            throw new InvalidDataException("Les réglages du motif image sont invalides.");
     }
 
     public static void ValidateImage(string path) => _ = Load(path);
 
+    public static string PrepareImage(string path, bool removeBackground, byte tolerance = 42)
+    {
+        if (tolerance is < 5 or > 120) throw new InvalidDataException("La tolérance de suppression du fond doit être comprise entre 5 et 120.");
+        var bitmap = LoadBitmap(path);
+        var stride = checked(bitmap.PixelWidth * 4);
+        var pixels = new byte[checked(stride * bitmap.PixelHeight)];
+        bitmap.CopyPixels(pixels, stride, 0);
+        if (removeBackground) RemoveEdgeBackground(pixels, bitmap.PixelWidth, bitmap.PixelHeight, stride, tolerance);
+        var outputBitmap = BitmapSource.Create(bitmap.PixelWidth, bitmap.PixelHeight, bitmap.DpiX, bitmap.DpiY, PixelFormats.Bgra32, null, pixels, stride);
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PolyChrom3MF", "PatternCache");
+        Directory.CreateDirectory(folder);
+        var destination = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".png");
+        using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(outputBitmap));
+        encoder.Save(output);
+        return destination;
+    }
+
     static PatternImage Load(string path)
     {
-        var file = new FileInfo(path);
-        if (!file.Exists || !path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || file.Length is <= 0 or > MaxPngBytes) throw new InvalidDataException("Le motif doit être un fichier PNG valide de 32 Mo maximum.");
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var decoder = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
-        if (decoder.Frames.Count != 1) throw new InvalidDataException("Le PNG animé ou multiframe n’est pas pris en charge.");
-        BitmapSource bitmap = decoder.Frames[0];
-        if (bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0 || (long)bitmap.PixelWidth * bitmap.PixelHeight > MaxPixels) throw new InvalidDataException("La résolution du PNG est trop élevée (16 mégapixels maximum).");
-        if (bitmap.Format != PixelFormats.Bgra32) bitmap = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        var bitmap = LoadBitmap(path);
         var stride = checked(bitmap.PixelWidth * 4); var pixels = new byte[checked(stride * bitmap.PixelHeight)];
         bitmap.CopyPixels(pixels, stride, 0);
         return new PatternImage(bitmap.PixelWidth, bitmap.PixelHeight, stride, pixels);
+    }
+
+    static BitmapSource LoadBitmap(string path)
+    {
+        var file = new FileInfo(path);
+        var extension = file.Extension.ToLowerInvariant();
+        if (!file.Exists || extension is not (".png" or ".jpg" or ".jpeg") || file.Length <= 0)
+            throw new InvalidDataException("Le motif doit être une image PNG, JPG ou JPEG valide.");
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        if (decoder.Frames.Count != 1) throw new InvalidDataException("Les images animées ou multiframe ne sont pas prises en charge.");
+        BitmapSource bitmap = decoder.Frames[0];
+        if (bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0)
+            throw new InvalidDataException("La résolution de l’image est invalide.");
+        if (bitmap.Format != PixelFormats.Bgra32) bitmap = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    static void RemoveEdgeBackground(byte[] pixels, int width, int height, int stride, byte tolerance)
+    {
+        var references = new[]
+        {
+            RgbAt(pixels, 0, 0, stride), RgbAt(pixels, width - 1, 0, stride),
+            RgbAt(pixels, 0, height - 1, stride), RgbAt(pixels, width - 1, height - 1, stride)
+        };
+        var threshold = tolerance * tolerance * 3;
+        var removed = new bool[checked(width * height)];
+        var queue = new Queue<int>();
+        bool Similar(int index)
+        {
+            var offset = (index / width) * stride + (index % width) * 4;
+            foreach (var reference in references)
+            {
+                var db = pixels[offset] - reference.B;
+                var dg = pixels[offset + 1] - reference.G;
+                var dr = pixels[offset + 2] - reference.R;
+                if (db * db + dg * dg + dr * dr <= threshold) return true;
+            }
+            return false;
+        }
+        void Add(int index)
+        {
+            if (removed[index] || !Similar(index)) return;
+            removed[index] = true;
+            queue.Enqueue(index);
+        }
+        for (var x = 0; x < width; x++) { Add(x); Add((height - 1) * width + x); }
+        for (var y = 1; y < height - 1; y++) { Add(y * width); Add(y * width + width - 1); }
+        while (queue.Count > 0)
+        {
+            var index = queue.Dequeue();
+            var x = index % width;
+            var y = index / width;
+            pixels[y * stride + x * 4 + 3] = 0;
+            if (x > 0) Add(index - 1);
+            if (x + 1 < width) Add(index + 1);
+            if (y > 0) Add(index - width);
+            if (y + 1 < height) Add(index + width);
+        }
+    }
+
+    static (byte B, byte G, byte R) RgbAt(byte[] pixels, int x, int y, int stride)
+    {
+        var offset = y * stride + x * 4;
+        return (pixels[offset], pixels[offset + 1], pixels[offset + 2]);
     }
 
     static (double U, double V, bool Repeats) Coordinates(PatternMode mode, double x, double y, double z, Vertex a, Vertex b, Vertex c, ModelBounds bounds)

@@ -14,6 +14,10 @@ public sealed class AppSettings
     public bool ShowWelcome { get; set; } = true;
     public int ColorCount { get; set; } = 4;
     public List<string> FilamentColors { get; set; } = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
+    public string LastSeenVersion { get; set; } = "";
+    public string LastReleaseNotes { get; set; } = "";
+    public string PendingUpdateVersion { get; set; } = "";
+    public string PendingUpdateNotes { get; set; } = "";
 }
 
 public sealed class SettingsService
@@ -45,6 +49,10 @@ public sealed class SettingsService
         if (value.Theme is not ("Sombre" or "Clair" or "Système")) value.Theme = "Sombre";
         if (string.IsNullOrWhiteSpace(value.ExportFolder)) value.ExportFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         value.PreferredSlicer ??= "";
+        value.LastSeenVersion = SafeText(value.LastSeenVersion, 32);
+        value.LastReleaseNotes = SafeText(value.LastReleaseNotes, 4000);
+        value.PendingUpdateVersion = SafeText(value.PendingUpdateVersion, 32);
+        value.PendingUpdateNotes = SafeText(value.PendingUpdateNotes, 4000);
         value.ColorCount = Math.Clamp(value.ColorCount, 4, 32);
         value.FilamentColors = (value.FilamentColors ?? [])
             .Where(color => !string.IsNullOrWhiteSpace(color) && Regex.IsMatch(color, "^#[0-9A-Fa-f]{6}$"))
@@ -52,4 +60,7 @@ public sealed class SettingsService
         if (value.FilamentColors.Count == 0) value.FilamentColors = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
         return value;
     }
+
+    static string SafeText(string? value, int maximum) =>
+        string.IsNullOrWhiteSpace(value) ? "" : new string(value.Where(character => character is '\r' or '\n' or '\t' || !char.IsControl(character)).Take(maximum).ToArray()).Trim();
 }

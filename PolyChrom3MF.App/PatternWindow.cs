@@ -26,17 +26,18 @@ public sealed class PatternWindow : Window
 
     public PatternSettings Value { get; private set; }
 
-    public PatternWindow(string imagePath, IReadOnlyList<ModelObject> objects, PatternSettings? current = null)
+    public PatternWindow(string imagePath, IReadOnlyList<ModelObject> objects, PatternSettings? current = null, string? displayName = null)
     {
         _imagePath = imagePath;
-        Value = current is null ? new PatternSettings(imagePath, DisplayName: Path.GetFileName(imagePath)) : current with { ImagePath = imagePath, DisplayName = Path.GetFileName(imagePath) };
-        Title = "Appliquer un motif PNG"; Width = 650; MinHeight = 700; MaxHeight = Math.Max(700, SystemParameters.WorkArea.Height * .92); SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        displayName ??= Path.GetFileName(imagePath);
+        Value = current is null ? new PatternSettings(imagePath, DisplayName: displayName) : current with { ImagePath = imagePath, DisplayName = displayName };
+        Title = "Appliquer un motif image"; Width = 650; MinHeight = 700; MaxHeight = Math.Max(700, SystemParameters.WorkArea.Height * .92); SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         _mode.ItemsSource = new[] { new Option<PatternMode>("Projection frontale", PatternMode.Front), new Option<PatternMode>("Enveloppement cylindrique", PatternMode.Cylindrical), new Option<PatternMode>("Motif répété", PatternMode.Repeated), new Option<PatternMode>("Projection triplanaire", PatternMode.Triplanar) }; _mode.DisplayMemberPath = nameof(Option<PatternMode>.Label); _mode.SelectedIndex = (int)Value.Mode;
         var targets = new List<Option<int>> { new("Toute la figurine", -1) }; targets.AddRange(objects.Select(obj => new Option<int>(obj.ToString(), obj.Index))); _target.ItemsSource = targets; _target.DisplayMemberPath = nameof(Option<int>.Label); _target.SelectedItem = targets.FirstOrDefault(item => item.Value == Value.TargetObject) ?? targets[0];
         _scale.Value = Value.Scale; _rotation.Value = Value.Rotation; _offsetX.Value = Value.OffsetX; _offsetY.Value = Value.OffsetY; _variants.IsChecked = Value.FourVariants;
 
         var panel = new StackPanel { Margin = new Thickness(24) };
-        panel.Children.Add(new TextBlock { Text = "MOTIF PNG", FontSize = 22, FontWeight = FontWeights.Bold });
+        panel.Children.Add(new TextBlock { Text = "MOTIF IMAGE", FontSize = 22, FontWeight = FontWeights.Bold });
         panel.Children.Add(new TextBlock { Text = "Le motif sera converti vers les couleurs de filament de chaque proposition. Les pixels transparents conservent la coloration existante.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 14), Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"] });
         var preview = new Image { Source = LoadPreview(imagePath), Height = 190, Stretch = System.Windows.Media.Stretch.Uniform, Margin = new Thickness(0, 0, 0, 14) };
         panel.Children.Add(new Border { Background = (System.Windows.Media.Brush)Application.Current.Resources["InputBackground"], BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["PanelBorder"], BorderThickness = new Thickness(1), Padding = new Thickness(8), Child = preview });
@@ -50,7 +51,7 @@ public sealed class PatternWindow : Window
 
     void Apply(object sender, RoutedEventArgs e)
     {
-        Value = new PatternSettings(_imagePath, ((Option<PatternMode>)_mode.SelectedItem).Value, _scale.Value, _rotation.Value, _offsetX.Value, _offsetY.Value, ((Option<int>)_target.SelectedItem).Value, _variants.IsChecked == true, DisplayName: Path.GetFileName(_imagePath));
+        Value = new PatternSettings(_imagePath, ((Option<PatternMode>)_mode.SelectedItem).Value, _scale.Value, _rotation.Value, _offsetX.Value, _offsetY.Value, ((Option<int>)_target.SelectedItem).Value, _variants.IsChecked == true, DisplayName: Value.DisplayName);
         DialogResult = true;
     }
 

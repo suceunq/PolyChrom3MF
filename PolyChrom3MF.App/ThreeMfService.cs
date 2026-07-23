@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Windows.Media;
+using System.Windows.Media.Media3D;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -9,9 +10,6 @@ namespace PolyChrom3MF.App;
 
 public sealed class ThreeMfService
 {
-    const long MaxUncompressed = 512L * 1024 * 1024;
-    const int MaxEntries = 500;
-    const double MaxCompressionRatio = 250;
     internal static readonly XNamespace Core = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
 
     public ModelDocument Read(string path)
@@ -35,26 +33,18 @@ public sealed class ThreeMfService
             }
 
             var mainXml = parts.First(p => p.Entry.FullName.Equals(mainEntry.FullName, StringComparison.OrdinalIgnoreCase)).Xml;
-            var objects = new List<ModelObject>();
-            var index = 0;
-            foreach (var part in parts)
-            {
-                var unit = part.Xml.Root!.Attribute("unit")?.Value ?? "millimeter";
-                var scale = UnitToMillimeters(unit);
-                foreach (var element in part.Xml.Descendants(Core + "object"))
-                {
-                    var mesh = element.Element(Core + "mesh");
-                    if (mesh is null) continue;
-                    var vertices = mesh.Descendants(Core + "vertex")
-                        .Select(v => new Vertex(Number(v, "x") * scale, Number(v, "y") * scale, Number(v, "z") * scale)).ToList();
-                    var triangles = mesh.Descendants(Core + "triangle")
-                        .Select(t => new Triangle(Integer(t, "v1"), Integer(t, "v2"), Integer(t, "v3"))).ToList();
-                    if (vertices.Count == 0 || triangles.Count == 0) continue;
-                    if (triangles.Any(t => t.A < 0 || t.B < 0 || t.C < 0 || t.A >= vertices.Count || t.B >= vertices.Count || t.C >= vertices.Count))
-                        throw new InvalidDataException($"L’objet {element.Attribute("id")?.Value} contient des indices de triangles invalides.");
-                    objects.Add(new ModelObject(index++, element.Attribute("id")?.Value ?? index.ToString(), vertices, triangles, part.Entry.FullName));
-                }
-            }
+            var modelParts = parts.ToDictionary(
+                part => NormalizePartPath(part.Entry.FullName),
+                part => new ModelPart(
+                    NormalizePartPath(part.Entry.FullName),
+                    part.Xml,
+                    UnitToMillimeters(part.Xml.Root!.Attribute("unit")?.Value ?? "millimeter"),
+                    part.Xml.Descendants(Core + "object")
+                        .Where(element => element.Attribute("id") is not null)
+                        .ToDictionary(element => element.Attribute("id")!.Value, StringComparer.Ordinal)),
+                StringComparer.OrdinalIgnoreCase);
+            var objects = InstantiateBuild(modelParts, NormalizePartPath(mainEntry.FullName));
+            if (objects.Count == 0) objects = ReadUninstantiatedMeshes(modelParts);
 
             if (objects.Count == 0) throw new InvalidDataException("Aucun maillage exploitable n’a été trouvé dans les fragments 3MF.");
             var all = objects.SelectMany(x => x.Vertices).ToArray();
@@ -66,7 +56,7 @@ public sealed class ThreeMfService
 
             return new ModelDocument(path, mainXml, mainEntry.FullName, objects,
                 all.Max(x => x.X) - all.Min(x => x.X), all.Max(x => x.Y) - all.Min(x => x.Y), all.Max(x => x.Z) - all.Min(x => x.Z),
-                zip.Entries.Select(e => e.FullName).ToList(), objects.Sum(o => o.Triangles.Count),
+                zip.Entries.Select(e => e.FullName).ToList(), objects.Sum(o => (long)o.Triangles.Count),
                 warnings.Count == 0 ? null : string.Join(" ", warnings), mainXml.Root!.Attribute("unit")?.Value ?? "millimeter", componentCount, existingColors, "3MF");
         }
         catch (InvalidDataException) { throw; }
@@ -177,31 +167,133 @@ public sealed class ThreeMfService
     static void ValidateArchive(ZipArchive zip)
     {
         if (zip.Entries.Count == 0) throw new InvalidDataException("L’archive 3MF est vide.");
-        if (zip.Entries.Count > MaxEntries) throw new InvalidDataException("Archive refusée : trop d’entrées.");
-        long total = 0;
         foreach (var entry in zip.Entries)
         {
             var normalized = entry.FullName.Replace('\\', '/');
             if (normalized.StartsWith('/') || normalized.Split('/').Any(p => p == "..")) throw new InvalidDataException("Archive refusée : chemin ZIP non sûr.");
-            checked { total += entry.Length; }
-            if (entry.CompressedLength > 0 && entry.Length / (double)entry.CompressedLength > MaxCompressionRatio)
-                throw new InvalidDataException("Archive refusée : taux de compression suspect.");
         }
-        if (total > MaxUncompressed) throw new InvalidDataException("Archive refusée : taille décompressée excessive.");
     }
 
     static ZipArchiveEntry? FindModelEntry(ZipArchive zip) => zip.GetEntry("3D/3dmodel.model") ?? zip.Entries.FirstOrDefault(x => x.FullName.EndsWith(".model", StringComparison.OrdinalIgnoreCase));
     static XDocument LoadSecureXml(ZipArchiveEntry entry)
     {
-        var characterLimit = XmlCharacterLimit(entry.Length);
         using var stream = entry.Open();
-        using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = characterLimit, MaxCharactersFromEntities = 0 });
+        using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 0, MaxCharactersFromEntities = 0 });
         return XDocument.Load(reader, LoadOptions.None);
     }
-    internal static long XmlCharacterLimit(long entryLength) => Math.Min(MaxUncompressed, Math.Max(100_000_000L, entryLength > MaxUncompressed - 1_000_000L ? MaxUncompressed : entryLength + 1_000_000L));
+
+    static List<ModelObject> InstantiateBuild(IReadOnlyDictionary<string, ModelPart> parts, string mainPartPath)
+    {
+        if (!parts.TryGetValue(mainPartPath, out var mainPart)) throw new InvalidDataException("Fragment principal 3MF introuvable.");
+        var build = mainPart.Xml.Root?.Element(Core + "build");
+        if (build is null) return [];
+        var objects = new List<ModelObject>();
+        foreach (var item in build.Elements(Core + "item"))
+        {
+            var objectId = item.Attribute("objectid")?.Value ?? throw new InvalidDataException("Élément de construction 3MF sans objet.");
+            var targetPart = ReferencedPart(item, mainPart.Path);
+            ResolveObject(parts, targetPart, objectId, ParseTransform(item, mainPart.UnitScale), objects, new HashSet<string>(StringComparer.OrdinalIgnoreCase), 0);
+        }
+        return objects;
+    }
+
+    static void ResolveObject(IReadOnlyDictionary<string, ModelPart> parts, string partPath, string objectId, Matrix3D accumulated, List<ModelObject> output, HashSet<string> chain, int depth)
+    {
+        if (depth > 128) throw new InvalidDataException("Hiérarchie de composants 3MF trop profonde.");
+        if (!parts.TryGetValue(partPath, out var part) || !part.Objects.TryGetValue(objectId, out var element))
+            throw new InvalidDataException($"Composant 3MF introuvable : {partPath}#{objectId}.");
+        var key = partPath + "#" + objectId;
+        if (!chain.Add(key)) throw new InvalidDataException("Cycle détecté dans les composants 3MF.");
+        try
+        {
+            if (element.Element(Core + "mesh") is not null)
+            {
+                var mesh = ReadMesh(element, part, accumulated, output.Count);
+                if (mesh is not null) output.Add(mesh);
+                return;
+            }
+            var components = element.Element(Core + "components")?.Elements(Core + "component").ToList() ?? [];
+            foreach (var component in components)
+            {
+                var childId = component.Attribute("objectid")?.Value ?? throw new InvalidDataException("Composant 3MF sans objet cible.");
+                var childPart = ReferencedPart(component, part.Path);
+                var childTransform = ParseTransform(component, part.UnitScale);
+                var combined = Matrix3D.Multiply(childTransform, accumulated);
+                ResolveObject(parts, childPart, childId, combined, output, chain, depth + 1);
+            }
+        }
+        finally { chain.Remove(key); }
+    }
+
+    static List<ModelObject> ReadUninstantiatedMeshes(IReadOnlyDictionary<string, ModelPart> parts)
+    {
+        var objects = new List<ModelObject>();
+        foreach (var part in parts.Values)
+            foreach (var element in part.Objects.Values)
+            {
+                if (element.Element(Core + "mesh") is null) continue;
+                var mesh = ReadMesh(element, part, Matrix3D.Identity, objects.Count);
+                if (mesh is not null) objects.Add(mesh);
+            }
+        return objects;
+    }
+
+    static ModelObject? ReadMesh(XElement element, ModelPart part, Matrix3D transform, int index)
+    {
+        var mesh = element.Element(Core + "mesh");
+        if (mesh is null) return null;
+        var vertices = mesh.Descendants(Core + "vertex")
+            .Select(vertex =>
+            {
+                var point = transform.Transform(new Point3D(Number(vertex, "x") * part.UnitScale, Number(vertex, "y") * part.UnitScale, Number(vertex, "z") * part.UnitScale));
+                return new Vertex(point.X, point.Y, point.Z);
+            }).ToList();
+        var triangles = mesh.Descendants(Core + "triangle")
+            .Select(triangle => new Triangle(Integer(triangle, "v1"), Integer(triangle, "v2"), Integer(triangle, "v3"))).ToList();
+        if (vertices.Count == 0 || triangles.Count == 0) return null;
+        if (vertices.Any(vertex => !double.IsFinite(vertex.X) || !double.IsFinite(vertex.Y) || !double.IsFinite(vertex.Z)))
+            throw new InvalidDataException($"L’objet {element.Attribute("id")?.Value} contient une transformation invalide.");
+        if (triangles.Any(triangle => triangle.A < 0 || triangle.B < 0 || triangle.C < 0 || triangle.A >= vertices.Count || triangle.B >= vertices.Count || triangle.C >= vertices.Count))
+            throw new InvalidDataException($"L’objet {element.Attribute("id")?.Value} contient des indices de triangles invalides.");
+        return new ModelObject(index, element.Attribute("id")?.Value ?? (index + 1).ToString(CultureInfo.InvariantCulture), vertices, triangles, part.Path);
+    }
+
+    static Matrix3D ParseTransform(XElement element, double unitScale)
+    {
+        var raw = element.Attribute("transform")?.Value;
+        if (string.IsNullOrWhiteSpace(raw)) return Matrix3D.Identity;
+        var values = raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture)).ToArray();
+        if (values.Length != 12 || values.Any(value => !double.IsFinite(value))) throw new InvalidDataException("Transformation 3MF invalide.");
+        return new Matrix3D(
+            values[0], values[1], values[2], 0,
+            values[3], values[4], values[5], 0,
+            values[6], values[7], values[8], 0,
+            values[9] * unitScale, values[10] * unitScale, values[11] * unitScale, 1);
+    }
+
+    static string ReferencedPart(XElement reference, string currentPart)
+    {
+        var path = reference.Attributes().FirstOrDefault(attribute => attribute.Name.LocalName.Equals("path", StringComparison.OrdinalIgnoreCase))?.Value;
+        if (string.IsNullOrWhiteSpace(path)) return currentPart;
+        if (path.StartsWith('/')) return NormalizePartPath(path);
+        var separator = currentPart.LastIndexOf('/');
+        return NormalizePartPath((separator >= 0 ? currentPart[..(separator + 1)] : "") + path);
+    }
+
+    static string NormalizePartPath(string path)
+    {
+        var normalized = path.Replace('\\', '/').TrimStart('/');
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0 || segments.Any(segment => segment is "." or "..")) throw new InvalidDataException("Chemin de fragment 3MF invalide.");
+        return string.Join('/', segments);
+    }
+
     static double Number(XElement element, string name) => double.Parse(element.Attribute(name)?.Value ?? "0", NumberStyles.Float, CultureInfo.InvariantCulture);
     static int Integer(XElement element, string name) => int.Parse(element.Attribute(name)?.Value ?? "-1", NumberStyles.Integer, CultureInfo.InvariantCulture);
     internal static double UnitToMillimeters(string unit) => unit.ToLowerInvariant() switch { "micron" => .001, "centimeter" => 10, "inch" => 25.4, "foot" => 304.8, "meter" => 1000, _ => 1 };
+
+    sealed record ModelPart(string Path, XDocument Xml, double UnitScale, Dictionary<string, XElement> Objects);
 }
 
 public sealed record Vertex(double X, double Y, double Z);
@@ -210,7 +302,7 @@ public sealed record ModelObject(int Index, string Id, List<Vertex> Vertices, Li
 {
     public override string ToString() => $"Objet {Id} — {Triangles.Count:N0} triangles";
 }
-public sealed record ModelDocument(string Path, XDocument Xml, string ModelEntry, List<ModelObject> Objects, double SizeX, double SizeY, double SizeZ, List<string> Entries, int TriangleCount, string? Warning, string Unit, int ComponentCount, int ExistingColorCount, string SourceFormat);
+public sealed record ModelDocument(string Path, XDocument Xml, string ModelEntry, List<ModelObject> Objects, double SizeX, double SizeY, double SizeZ, List<string> Entries, long TriangleCount, string? Warning, string Unit, int ComponentCount, int ExistingColorCount, string SourceFormat);
 public sealed record PaletteColor(string Name, string Hex)
 {
     public System.Windows.Media.Color Color => (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(Hex)!;
