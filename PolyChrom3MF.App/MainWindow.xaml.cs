@@ -289,6 +289,11 @@ public partial class MainWindow : Window
         if (file.ShowDialog() != true) return;
         PatternWindow dialog;
         string preparedImage;
+        var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected));
+        var proposalsBeforePreview = _proposals;
+        var previewBase = (_beforePatternProposals ?? _proposals).Select(Clone).ToList();
+        CancellationTokenSource? previewCancellation = null;
+        var previewRevision = 0;
         try
         {
             PatternService.ValidateImage(file.FileName);
@@ -300,14 +305,32 @@ public partial class MainWindow : Window
             var sourceImage = file.FileName;
             preparedImage = await Task.Run(() => PatternService.PrepareImage(sourceImage, removeBackground, tolerance));
             dialog = new PatternWindow(preparedImage, _doc.Objects, _pattern, Path.GetFileName(file.FileName)) { Owner = this };
-            if (dialog.ShowDialog() != true) return;
+            dialog.PreviewRequested += PreviewPattern;
+            var accepted = dialog.ShowDialog() == true;
+            Interlocked.Increment(ref previewRevision);
+            previewCancellation?.Cancel();
+            dialog.PreviewRequested -= PreviewPattern;
+            _proposals = proposalsBeforePreview;
+            SelectProposal(selectedIndex);
+            RefreshBindings();
+            if (!accepted)
+            {
+                Render();
+                StatusText.Text = "Aperçu du motif annulé : la coloration précédente a été restaurée.";
+                return;
+            }
         }
         catch (Exception ex)
         {
+            Interlocked.Increment(ref previewRevision);
+            previewCancellation?.Cancel();
+            _proposals = proposalsBeforePreview;
+            SelectProposal(selectedIndex);
+            RefreshBindings();
+            Render();
             MessageBox.Show(ex.Message, "Image impossible à ouvrir", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
-        var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected));
         PushUndo();
         var previousBeforePattern = _beforePatternProposals;
         _beforePatternProposals ??= _proposals.Select(Clone).ToList();
@@ -342,6 +365,42 @@ public partial class MainWindow : Window
             StatusText.Text = "Échec de l’application du motif image.";
         }
         finally { SetBusy(false); }
+
+        async void PreviewPattern(PatternSettings settings)
+        {
+            var revision = Interlocked.Increment(ref previewRevision);
+            var cancellation = new CancellationTokenSource();
+            var previousCancellation = previewCancellation;
+            previewCancellation = cancellation;
+            previousCancellation?.Cancel();
+            try
+            {
+                StatusText.Text = "Calcul de l’aperçu du motif…";
+                var proposal = Clone(previewBase[selectedIndex]);
+                var previewMode = settings.FourVariants
+                    ? new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar }[Math.Min(selectedIndex, 3)]
+                    : settings.Mode;
+                var result = await Task.Run(() => _patternService.Apply(_doc, proposal, settings, previewMode, cancellation.Token), cancellation.Token);
+                if (cancellation.IsCancellationRequested || revision != previewRevision) return;
+                var preview = previewBase.Select(Clone).ToList();
+                preview[selectedIndex] = Rename(proposal, $"Aperçu — {PatternModeName(previewMode)}", $"Aperçu en direct · {PatternModeName(previewMode).ToLowerInvariant()}");
+                _proposals = preview;
+                SelectProposal(selectedIndex);
+                RefreshBindings();
+                Render();
+                StatusText.Text = $"Aperçu actualisé sur {result.ColoredTriangles:N0} triangles.";
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                if (revision == previewRevision) StatusText.Text = $"Aperçu impossible : {ex.Message}";
+            }
+            finally
+            {
+                if (ReferenceEquals(previewCancellation, cancellation)) previewCancellation = null;
+                cancellation.Dispose();
+            }
+        }
     }
 
     void RemovePattern_Click(object sender, RoutedEventArgs e)
@@ -762,10 +821,13 @@ public partial class MainWindow : Window
             _paintStrokePoints.Clear();
             if (points.Length > 0 && _doc is not null && CapturePaintProjection() is { } projection)
             {
+                // Capture every UI-owned value before leaving the dispatcher thread.
+                var document = _doc;
+                var brushRadius = BrushRadiusPixels();
                 SetBusy(true, "Application du trait de pinceau…");
                 try
                 {
-                    var selection = await Task.Run(() => SelectTrianglesFromScreenStroke(_doc, points, BrushRadiusPixels(), projection));
+                    var selection = await Task.Run(() => SelectTrianglesFromScreenStroke(document, points, brushRadius, projection));
                     foreach (var pair in selection)
                     {
                         if (!_paintSelection.TryGetValue(pair.Key, out var current)) _paintSelection[pair.Key] = current = [];

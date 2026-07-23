@@ -12,9 +12,10 @@ public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTri
 
 public sealed class PatternService
 {
-    public PatternApplyResult Apply(ModelDocument document, ColorProposal proposal, PatternSettings settings, PatternMode? modeOverride = null)
+    public PatternApplyResult Apply(ModelDocument document, ColorProposal proposal, PatternSettings settings, PatternMode? modeOverride = null, CancellationToken cancellationToken = default)
     {
         ValidateSettings(settings);
+        cancellationToken.ThrowIfCancellationRequested();
         if (settings.TargetObject >= 0 && document.Objects.All(obj => obj.Index != settings.TargetObject))
             throw new InvalidDataException("L’objet ciblé par le motif n’existe pas dans ce modèle.");
         var image = Load(settings.ImagePath);
@@ -32,6 +33,7 @@ public sealed class PatternService
             }
             for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
             {
+                if ((triangleIndex & 8191) == 0) cancellationToken.ThrowIfCancellationRequested();
                 var triangle = obj.Triangles[triangleIndex];
                 var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
                 var x = (a.X + b.X + c.X) / 3; var y = (a.Y + b.Y + c.Y) / 3; var z = (a.Z + b.Z + c.Z) / 3;
