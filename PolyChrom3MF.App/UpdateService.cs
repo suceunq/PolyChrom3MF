@@ -53,9 +53,10 @@ public sealed class UpdateService
                 int read;
                 while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
                 {
+                    received += read;
+                    if (received > expectedLength || received > 250L * 1024 * 1024) throw new InvalidDataException("La mise à jour reçue dépasse la taille annoncée.");
                     await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                     hash.AppendData(buffer, 0, read);
-                    received += read;
                     progress?.Report(Math.Clamp(received * 100d / expectedLength, 0, 100));
                 }
                 await output.FlushAsync(cancellationToken);

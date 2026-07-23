@@ -1,4 +1,4 @@
-# PolyChrom 3MF 1.6.11
+# PolyChrom 3MF 1.7.0
 
 Application Windows française et locale pour analyser, visualiser et colorer des fichiers 3MF ou STL sans modifier leur géométrie. Au démarrage, l’utilisateur choisit de 4 à 32 couleurs ; l’application génère quatre propositions, permet les ajustements manuels et contrôle automatiquement chaque export.
 
@@ -10,6 +10,9 @@ Application Windows française et locale pour analyser, visualiser et colorer de
 ## Fonctions
 
 - Import 3MF et STL (ASCII ou binaire) par boîte de dialogue ou glisser-déposer.
+- Import de motifs PNG avec transparence, taille, rotation, décalage et ciblage de toute la figurine ou d’un objet.
+- Quatre projections PNG imprimables : frontale, cylindrique, répétée et triplanaire, automatiquement réduites vers la palette de filaments.
+- Coloration manuelle cumulative d’une face précise ou de zones de plusieurs tailles avant application de la couleur choisie.
 - Prise en charge des conteneurs 3MF multiparties utilisant l’extension Production.
 - Analyse sécurisée ZIP/XML des objets, composants, unités et matériaux.
 - Visualiseur WPF 3D : rotation, déplacement, zoom, sélection, vues normalisées, perspective et plateau.
@@ -25,7 +28,7 @@ Application Windows française et locale pour analyser, visualiser et colorer de
 - Menus Fichier, Édition, Affichage et Aide au style Windows standard.
 - Détection automatique des nouvelles versions au démarrage, téléchargement vérifié avec barre de progression, installation silencieuse et redémarrage automatique.
 - Fenêtre « À propos » créditant 3D TER avec un lien TikTok cliquable.
-- Annuler/rétablir et projets portables `.poly3mf` réunissant dans un fichier partageable le modèle 3D, les propositions, les palettes, les motifs et la vue exacte.
+- Annuler/rétablir et projets portables `.poly3mf` réunissant dans un fichier partageable le modèle 3D, les propositions, les palettes, le PNG intégré, ses réglages et la vue exacte.
 - Ouverture des projets `.poly3mf` par double-clic, glisser-déposer ou menu Fichier, avec compatibilité des anciens projets.
 - Export 3MF standard `basematerials`, géométrie source préservée et validation par réouverture.
 

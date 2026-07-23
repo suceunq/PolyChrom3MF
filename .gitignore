@@ -2,6 +2,7 @@
 **/obj/
 publish/
 LIVRAISON_FINALE/
+LIVRAISON_TEST_LOCALE/
 .vs/
 .idea/
 *.user
@@ -9,4 +10,3 @@ LIVRAISON_FINALE/
 *.tmp
 temp-state.png
 ui-*.png
-

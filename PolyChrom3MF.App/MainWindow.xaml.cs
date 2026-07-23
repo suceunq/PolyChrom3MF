@@ -21,17 +21,21 @@ public partial class MainWindow : Window
     readonly ThreeMfService _service = new();
     readonly StlService _stlService = new();
     readonly PaletteService _palettes = new();
+    readonly PatternService _patternService = new();
     readonly ProjectService _projects = new();
     readonly SettingsService _settingsService = new();
     readonly SlicerDetectionService _slicerDetection = new();
     readonly UpdateService _updateService = new();
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
+    readonly Dictionary<int, HashSet<int>> _paintSelection = [];
     readonly Stack<EditorState> _undo = [];
     readonly Stack<EditorState> _redo = [];
     AppSettings _settings;
     ModelDocument? _doc;
     List<ColorProposal> _proposals = [];
+    List<ColorProposal>? _beforePatternProposals;
     ColorProposal? _selected;
+    PatternSettings? _pattern;
     System.Windows.Point _last;
     double _yaw = -40, _pitch = -25, _zoom = 1;
     bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked;
@@ -49,11 +53,14 @@ public partial class MainWindow : Window
         EnsurePreferredSlicer();
         BuildScene();
         ApplyTheme();
-        ContentRendered += async (_, _) =>
+        Loaded += async (_, _) =>
         {
             var startupFile = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(File.Exists);
-            if (_settings.ShowWelcome) ShowWelcome();
-            if (startupFile is null || !Path.GetExtension(startupFile).Equals(".poly3mf", StringComparison.OrdinalIgnoreCase)) ChooseColorCount(false);
+            if (startupFile is null)
+            {
+                if (_settings.ShowWelcome) ShowWelcome();
+                ChooseColorCount(false);
+            }
             if (startupFile is not null && new[] { ".3mf", ".stl", ".poly3mf" }.Contains(Path.GetExtension(startupFile), StringComparer.OrdinalIgnoreCase))
             {
                 if (Path.GetExtension(startupFile).Equals(".poly3mf", StringComparison.OrdinalIgnoreCase)) await LoadProject(startupFile);
@@ -75,6 +82,7 @@ public partial class MainWindow : Window
         try
         {
             _doc = await Task.Run(() => Path.GetExtension(path).Equals(".stl", StringComparison.OrdinalIgnoreCase) ? _stlService.Read(path) : _service.Read(path));
+            _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
             _lastSlicerFile = path; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             FileText.Text = Path.GetFileName(path);
             InfoText.Text = $"Format : {_doc.SourceFormat}\n{_doc.Objects.Count} objet(s) · {_doc.TriangleCount:N0} triangles\nUnité : {_doc.Unit}\nComposants : {_doc.ComponentCount}";
@@ -89,6 +97,7 @@ public partial class MainWindow : Window
             FitCamera();
             Render();
             _dirty = false;
+            _undo.Clear(); _redo.Clear();
             StatusText.Text = _doc.Warning ?? "Analyse terminée.";
             return true;
         }
@@ -117,6 +126,7 @@ public partial class MainWindow : Window
     void GenerateProposals()
     {
         if (_doc is null) return;
+        _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
         var custom = UseFilaments.IsChecked == true ? _settings.FilamentColors : null;
         _proposals = _palettes.Create(_doc, custom, _generation, _funMode, _colorCount);
         ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS";
@@ -131,6 +141,7 @@ public partial class MainWindow : Window
         _selected = _proposals[Math.Clamp(index, 0, _proposals.Count - 1)];
         _loadingControls = true;
         ObjectColorCombo.ItemsSource = _selected.Colors;
+        var paintColor = Math.Max(0, PaintColorCombo.SelectedIndex); PaintColorCombo.ItemsSource = _selected.Colors; PaintColorCombo.SelectedIndex = Math.Min(paintColor, _selected.Colors.Count - 1);
         if (ObjectsList.SelectedIndex >= 0)
             ObjectColorCombo.SelectedIndex = _selected.Assignments.GetValueOrDefault(ObjectsList.SelectedIndex, 0);
         _loadingControls = false;
@@ -252,6 +263,146 @@ public partial class MainWindow : Window
         _dirty = true;
     }
 
+    async void ImportPattern_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _selected is null) { MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Motif PNG"); return; }
+        var file = new OpenFileDialog { Filter = "Images PNG (*.png)|*.png", CheckFileExists = true, Title = "Choisir le motif à appliquer" };
+        if (file.ShowDialog() != true) return;
+        PatternWindow dialog;
+        try
+        {
+            PatternService.ValidateImage(file.FileName);
+            dialog = new PatternWindow(file.FileName, _doc.Objects, _pattern) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "PNG impossible à ouvrir", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected));
+        PushUndo();
+        var previousBeforePattern = _beforePatternProposals;
+        _beforePatternProposals ??= _proposals.Select(Clone).ToList();
+        var working = _beforePatternProposals.Select(Clone).ToList();
+        var settings = dialog.Value;
+        SetBusy(true, "Application du motif PNG sur les triangles…");
+        try
+        {
+            var results = await Task.Run(() =>
+            {
+                var list = new List<PatternApplyResult>();
+                if (settings.FourVariants)
+                {
+                    var modes = new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar };
+                    for (var i = 0; i < Math.Min(working.Count, modes.Length); i++)
+                    {
+                        list.Add(_patternService.Apply(_doc, working[i], settings, modes[i]));
+                        working[i] = Rename(working[i], $"PNG {i + 1} — {PatternModeName(modes[i])}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(modes[i]).ToLowerInvariant()}");
+                    }
+                }
+                else { list.Add(_patternService.Apply(_doc, working[selectedIndex], settings)); working[selectedIndex] = Rename(working[selectedIndex], $"PNG — {PatternModeName(settings.Mode)}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(settings.Mode).ToLowerInvariant()}"); }
+                return list;
+            });
+            var cachedImage = CachePatternImage(settings.ImagePath);
+            _proposals = working; _pattern = settings with { ImagePath = cachedImage }; SelectProposal(selectedIndex); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true;
+            var count = results.Sum(result => result.ColoredTriangles);
+            StatusText.Text = $"Motif PNG appliqué sur {count:N0} triangles avec {_colorCount} couleurs imprimables.";
+        }
+        catch (Exception ex)
+        {
+            _beforePatternProposals = previousBeforePattern;
+            MessageBox.Show(ex.Message, "Motif PNG impossible à appliquer", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Échec de l’application du motif PNG.";
+        }
+        finally { SetBusy(false); }
+    }
+
+    void RemovePattern_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pattern is null) { StatusText.Text = "Aucun motif PNG à retirer."; return; }
+        PushUndo(); var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected!));
+        if (_beforePatternProposals is not null) _proposals = _beforePatternProposals.Select(Clone).ToList();
+        else { _generation++; GenerateProposals(); }
+        _pattern = null; _beforePatternProposals = null; SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif PNG retiré.";
+    }
+
+    static ColorProposal Rename(ColorProposal proposal, string name, string description) => new(name, description, proposal.Colors.Select(color => new PaletteColor(color.Name, color.Hex)).ToList(), new Dictionary<int, int>(proposal.Assignments)) { TriangleAssignments = proposal.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
+    static string PatternModeName(PatternMode mode) => mode switch { PatternMode.Front => "Projection frontale", PatternMode.Cylindrical => "Enveloppement", PatternMode.Repeated => "Motif répété", _ => "Triplanaire" };
+    void UpdatePatternText() { if (PatternText is null) return; PatternText.Text = _pattern is null ? "Aucun motif importé" : $"{(_pattern.DisplayName ?? Path.GetFileName(_pattern.ImagePath))} · {(_pattern.FourVariants ? "4 projections" : PatternModeName(_pattern.Mode))} · taille {_pattern.Scale:0}%"; }
+    static string CachePatternImage(string source)
+    {
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PolyChrom 3MF", "PatternCache"); Directory.CreateDirectory(folder);
+        var destination = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".png"); File.Copy(source, destination, false); return destination;
+    }
+
+    void PaintMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (PaintMode is null || PaintModeMenu is null) return;
+        var enabled = sender == PaintModeMenu ? PaintModeMenu.IsChecked : PaintMode.IsChecked == true;
+        if (PaintMode.IsChecked != enabled) PaintMode.IsChecked = enabled;
+        if (PaintModeMenu.IsChecked != enabled) PaintModeMenu.IsChecked = enabled;
+        StatusText.Text = enabled ? "Sélection de zones active : cliquez sur plusieurs endroits du modèle." : "Sélection de zones désactivée.";
+    }
+
+    async Task SelectPaintZone(RayMeshGeometry3DHitTestResult hit, GeometryModel3D model)
+    {
+        if (_doc is null || !_modelObjects.TryGetValue(model, out var objectIndex)) return;
+        var obj = _doc.Objects.FirstOrDefault(item => item.Index == objectIndex); if (obj is null) return;
+        var sourceTriangle = obj.Triangles.FindIndex(triangle => SameTriangle(triangle, hit.VertexIndex1, hit.VertexIndex2, hit.VertexIndex3));
+        if (sourceTriangle < 0) return;
+        var brushScale = PaintBrushSize.SelectedIndex switch { 0 => 0, 1 => .003, 2 => .008, 3 => .02, _ => .05 };
+        var diagonal = Math.Sqrt(Math.Pow(obj.Vertices.Max(v => v.X) - obj.Vertices.Min(v => v.X), 2) + Math.Pow(obj.Vertices.Max(v => v.Y) - obj.Vertices.Min(v => v.Y), 2) + Math.Pow(obj.Vertices.Max(v => v.Z) - obj.Vertices.Min(v => v.Z), 2));
+        SetBusy(true, "Sélection de la zone…");
+        try
+        {
+            var selected = brushScale == 0 ? new HashSet<int> { sourceTriangle } : await Task.Run(() => SelectNearbyTriangles(obj, sourceTriangle, hit.PointHit, Math.Max(.0001, diagonal * brushScale)));
+            if (!_paintSelection.TryGetValue(objectIndex, out var current)) _paintSelection[objectIndex] = current = [];
+            foreach (var triangle in selected) current.Add(triangle);
+            UpdatePaintSelectionText(); Render(); StatusText.Text = $"Zone ajoutée · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Sélection de zone impossible", MessageBoxButton.OK, MessageBoxImage.Warning); StatusText.Text = "La zone n’a pas pu être sélectionnée."; }
+        finally { SetBusy(false); }
+    }
+
+    internal static HashSet<int> SelectNearbyTriangles(ModelObject obj, int sourceTriangle, Point3D center, double radius)
+    {
+        var source = obj.Triangles[sourceTriangle]; var sa = obj.Vertices[source.A]; var sb = obj.Vertices[source.B]; var sc = obj.Vertices[source.C]; var sourceNormal = Normal(sa, sb, sc); var radiusSquared = radius * radius;
+        var selected = new HashSet<int> { sourceTriangle };
+        for (var i = 0; i < obj.Triangles.Count; i++)
+        {
+            var triangle = obj.Triangles[i]; var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
+            var x = (a.X + b.X + c.X) / 3; var y = (a.Y + b.Y + c.Y) / 3; var z = (a.Z + b.Z + c.Z) / 3;
+            var dx = x - center.X; var dy = y - center.Y; var dz = z - center.Z;
+            if (dx * dx + dy * dy + dz * dz > radiusSquared) continue;
+            var normal = Normal(a, b, c); if (Math.Abs(Vector3D.DotProduct(sourceNormal, normal)) >= .35) selected.Add(i);
+        }
+        return selected;
+    }
+
+    static Vector3D Normal(Vertex a, Vertex b, Vertex c)
+    {
+        var normal = Vector3D.CrossProduct(new Vector3D(b.X - a.X, b.Y - a.Y, b.Z - a.Z), new Vector3D(c.X - a.X, c.Y - a.Y, c.Z - a.Z));
+        if (normal.LengthSquared > 0) normal.Normalize(); return normal;
+    }
+    static bool SameTriangle(Triangle triangle, int a, int b, int c) => (triangle.A == a || triangle.A == b || triangle.A == c) && (triangle.B == a || triangle.B == b || triangle.B == c) && (triangle.C == a || triangle.C == b || triangle.C == c);
+
+    void ApplyPaintSelection_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _selected is null || _selected.Colors.Count == 0 || _paintSelection.Count == 0) { MessageBox.Show("Activez la sélection de zones et cliquez sur le modèle avant d’appliquer une couleur.", "Coloration manuelle"); return; }
+        var colorIndex = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1); PushUndo();
+        foreach (var pair in _paintSelection)
+        {
+            var obj = _doc!.Objects.First(item => item.Index == pair.Key);
+            if (!_selected.TriangleAssignments.TryGetValue(pair.Key, out var assignments) || assignments.Length != obj.Triangles.Count) { assignments = new int[obj.Triangles.Count]; Array.Fill(assignments, _selected.Assignments.GetValueOrDefault(pair.Key, 0)); _selected.TriangleAssignments[pair.Key] = assignments; }
+            foreach (var triangle in pair.Value.Where(index => index >= 0 && index < assignments.Length)) assignments[triangle] = colorIndex;
+        }
+        var count = _paintSelection.Values.Sum(set => set.Count); _paintSelection.Clear(); UpdatePaintSelectionText(); Render(); RefreshBindings(); _dirty = true; StatusText.Text = $"{_selected.Colors[colorIndex].Name} appliquée sur {count:N0} triangles.";
+    }
+
+    void ClearPaintSelection_Click(object sender, RoutedEventArgs e) { _paintSelection.Clear(); UpdatePaintSelectionText(); Render(); StatusText.Text = "Sélection de zones effacée."; }
+    void UpdatePaintSelectionText() { if (PaintSelectionText is null) return; var count = _paintSelection.Values.Sum(set => set.Count); PaintSelectionText.Text = $"{count:N0} triangle{(count > 1 ? "s" : "")} sélectionné{(count > 1 ? "s" : "")}"; }
+
     async void Export_Click(object sender, RoutedEventArgs e)
     {
         if (_doc is null || _selected is null) { MessageBox.Show("Importez et sélectionnez une proposition avant l’export."); return; }
@@ -308,7 +459,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
         try
         {
-            _projects.Save(dialog.FileName, _doc, _proposals, _proposals.IndexOf(_selected!), _yaw, _pitch, _zoom, _generation, _funMode, _colorCount);
+            _projects.Save(dialog.FileName, _doc, _proposals, _proposals.IndexOf(_selected!), _yaw, _pitch, _zoom, _generation, _funMode, _colorCount, _pattern);
             _dirty = false; StatusText.Text = "Projet portable enregistré : modèle et styles sont réunis dans un seul fichier.";
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Projet impossible à enregistrer", MessageBoxButton.OK, MessageBoxImage.Error); }
@@ -328,6 +479,7 @@ public partial class MainWindow : Window
             var project = _projects.Load(projectPath);
             if (!File.Exists(project.SourcePath)) throw new FileNotFoundException("Le fichier 3MF ou STL source du projet est introuvable.", project.SourcePath);
             if (!await LoadModel(project.SourcePath)) return;
+            ProjectService.ValidateForDocument(project, _doc!);
             _generation = project.Generation; _funMode = project.FunMode; _colorCount = Math.Clamp(project.ColorCount, 4, 32); _settings.ColorCount = _colorCount;
             _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false;
             GenerateProposals();
@@ -341,7 +493,13 @@ public partial class MainWindow : Window
                     _proposals[p].TriangleAssignments.Clear();
                     foreach (var pair in project.TriangleAssignments[p]) _proposals[p].TriangleAssignments[pair.Key] = (int[])pair.Value.Clone();
                 }
+                if (project.ProposalNames is not null || project.ProposalDescriptions is not null)
+                {
+                    var proposal = _proposals[p];
+                    _proposals[p] = Rename(proposal, project.ProposalNames?.ElementAtOrDefault(p) ?? proposal.Name, project.ProposalDescriptions?.ElementAtOrDefault(p) ?? proposal.Description);
+                }
             }
+            _pattern = project.Pattern; _beforePatternProposals = null; UpdatePatternText();
             _yaw = project.Yaw; _pitch = project.Pitch; _zoom = project.Zoom; SelectProposal(project.SelectedProposal); RefreshBindings(); Render(); _dirty = false;
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Projet impossible à ouvrir", MessageBoxButton.OK, MessageBoxImage.Error); }
@@ -350,18 +508,18 @@ public partial class MainWindow : Window
     void New_Click(object sender, RoutedEventArgs e)
     {
         if (!ConfirmDiscard()) return;
-        _doc = null; _lastSlicerFile = null; _proposals.Clear(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
+        _doc = null; _lastSlicerFile = null; _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
     }
 
     bool ConfirmDiscard() => !_dirty || MessageBox.Show("Les modifications non enregistrées seront perdues. Continuer ?", "PolyChrom 3MF", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
 
     void PushUndo() { if (_proposals.Count == 0) return; _undo.Push(Capture()); _redo.Clear(); }
-    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList());
+    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList(), _pattern);
     static ColorProposal Clone(ColorProposal p) => new(p.Name, p.Description, p.Colors.Select(c => new PaletteColor(c.Name, c.Hex)).ToList(), new Dictionary<int, int>(p.Assignments)) { TriangleAssignments = p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
-    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); SelectProposal(state.Selected); RefreshBindings(); Render(); _dirty = true; }
+    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _beforePatternProposals = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); SelectProposal(state.Selected); RefreshBindings(); Render(); _dirty = true; }
     void Undo_Click(object sender, RoutedEventArgs e) { if (_undo.Count == 0) return; _redo.Push(Capture()); Restore(_undo.Pop()); StatusText.Text = "Modification annulée."; }
     void Redo_Click(object sender, RoutedEventArgs e) { if (_redo.Count == 0) return; _undo.Push(Capture()); Restore(_redo.Pop()); StatusText.Text = "Modification rétablie."; }
-    void RefreshBindings() { Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals; ObjectColorCombo.ItemsSource = null; ObjectColorCombo.ItemsSource = _selected?.Colors; }
+    void RefreshBindings() { Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals; ObjectColorCombo.ItemsSource = null; ObjectColorCombo.ItemsSource = _selected?.Colors; PaintColorCombo.ItemsSource = null; PaintColorCombo.ItemsSource = _selected?.Colors; if (_selected is not null && _selected.Colors.Count > 0) PaintColorCombo.SelectedIndex = 0; }
 
     void BuildScene()
     {
@@ -393,11 +551,13 @@ public partial class MainWindow : Window
             var colorCount = Math.Max(1, _selected?.Colors.Count ?? 1);
             var capacity = Math.Max(3, obj.Triangles.Count * 3 / colorCount);
             var indicesByColor = Enumerable.Range(0, colorCount).Select(_ => new Int32Collection(capacity)).ToArray();
+            var selectedIndices = new Int32Collection();
             for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
             {
+                var triangle = obj.Triangles[triangleIndex];
+                if (_paintSelection.TryGetValue(obj.Index, out var selectedTriangles) && selectedTriangles.Contains(triangleIndex)) { selectedIndices.Add(triangle.A); selectedIndices.Add(triangle.B); selectedIndices.Add(triangle.C); continue; }
                 var assigned = triangleColors is not null && triangleIndex < triangleColors.Length ? triangleColors[triangleIndex] : _selected?.Assignments.GetValueOrDefault(obj.Index, 0) ?? 0;
                 assigned = Math.Clamp(assigned, 0, colorCount - 1);
-                var triangle = obj.Triangles[triangleIndex];
                 indicesByColor[assigned].Add(triangle.A); indicesByColor[assigned].Add(triangle.B); indicesByColor[assigned].Add(triangle.C);
             }
             for (var colorIndex = 0; colorIndex < colorCount; colorIndex++)
@@ -413,6 +573,12 @@ public partial class MainWindow : Window
                 var model = new GeometryModel3D(mesh, material) { BackMaterial = material };
                 _modelObjects[model] = obj.Index;
                 Viewer.Children.Add(new ModelVisual3D { Content = model });
+            }
+            if (selectedIndices.Count > 0)
+            {
+                selectedIndices.Freeze(); var selectionMesh = new MeshGeometry3D { Positions = positions, TriangleIndices = selectedIndices }; selectionMesh.Freeze();
+                var selectionBrush = new SolidColorBrush(Color.FromRgb(255, 211, 45)); selectionBrush.Freeze(); var selectionMaterial = new DiffuseMaterial(selectionBrush); selectionMaterial.Freeze();
+                var selectionModel = new GeometryModel3D(selectionMesh, selectionMaterial) { BackMaterial = selectionMaterial }; _modelObjects[selectionModel] = obj.Index; Viewer.Children.Add(new ModelVisual3D { Content = selectionModel });
             }
         }
         UpdateCamera();
@@ -435,10 +601,16 @@ public partial class MainWindow : Window
 
     void FitCamera() { _zoom = 1; _yaw = -40; _pitch = 25; UpdateCamera(); }
     void Viewer_MouseWheel(object sender, MouseWheelEventArgs e) { _zoom = Math.Clamp(_zoom * (e.Delta > 0 ? .88 : 1.14), .08, 20); UpdateCamera(); }
-    void Viewer_MouseDown(object sender, MouseButtonEventArgs e) { _last = e.GetPosition(Viewer); Viewer.CaptureMouse(); if (e.ClickCount == 1) SelectFromView(_last); }
-    void Viewer_MouseMove(object sender, System.Windows.Input.MouseEventArgs e) { var p = e.GetPosition(Viewer); if (e.LeftButton == MouseButtonState.Pressed) { _yaw += (p.X - _last.X) * .45; _pitch += (p.Y - _last.Y) * .45; } else if (e.RightButton == MouseButtonState.Pressed) { var scale = _radius * _zoom / Math.Max(200, Viewer.ActualWidth); _center.X -= (p.X - _last.X) * scale; _center.Z += (p.Y - _last.Y) * scale; } else return; _last = p; UpdateCamera(); }
+    async void Viewer_MouseDown(object sender, MouseButtonEventArgs e) { _last = e.GetPosition(Viewer); if (PaintMode.IsChecked == true && e.ChangedButton == MouseButton.Left) { await SelectPaintFromView(_last); return; } Viewer.CaptureMouse(); if (e.ClickCount == 1) SelectFromView(_last); }
+    void Viewer_MouseMove(object sender, System.Windows.Input.MouseEventArgs e) { if (PaintMode.IsChecked == true) return; var p = e.GetPosition(Viewer); if (e.LeftButton == MouseButtonState.Pressed) { _yaw += (p.X - _last.X) * .45; _pitch += (p.Y - _last.Y) * .45; } else if (e.RightButton == MouseButtonState.Pressed) { var scale = _radius * _zoom / Math.Max(200, Viewer.ActualWidth); _center.X -= (p.X - _last.X) * scale; _center.Z += (p.Y - _last.Y) * scale; } else return; _last = p; UpdateCamera(); }
     void Viewer_MouseUp(object sender, MouseButtonEventArgs e) => Viewer.ReleaseMouseCapture();
     void SelectFromView(System.Windows.Point point) { VisualTreeHelper.HitTest(Viewer, null, result => { if (result is RayMeshGeometry3DHitTestResult hit && hit.ModelHit is GeometryModel3D model && _modelObjects.TryGetValue(model, out var index)) { ObjectsList.SelectedIndex = index; ObjectsList.ScrollIntoView(ObjectsList.SelectedItem); return HitTestResultBehavior.Stop; } return HitTestResultBehavior.Continue; }, new PointHitTestParameters(point)); }
+    async Task SelectPaintFromView(System.Windows.Point point)
+    {
+        RayMeshGeometry3DHitTestResult? selectedHit = null; GeometryModel3D? selectedModel = null;
+        VisualTreeHelper.HitTest(Viewer, null, result => { if (result is RayMeshGeometry3DHitTestResult hit && hit.ModelHit is GeometryModel3D model && _modelObjects.ContainsKey(model)) { selectedHit = hit; selectedModel = model; return HitTestResultBehavior.Stop; } return HitTestResultBehavior.Continue; }, new PointHitTestParameters(point));
+        if (selectedHit is not null && selectedModel is not null) await SelectPaintZone(selectedHit, selectedModel);
+    }
 
     void ViewIso_Click(object sender, RoutedEventArgs e) { _yaw = -40; _pitch = 25; UpdateCamera(); }
     void ViewFront_Click(object sender, RoutedEventArgs e) { _yaw = 180; _pitch = 0; UpdateCamera(); }
@@ -527,5 +699,5 @@ public partial class MainWindow : Window
     void Window_Closing(object? sender, CancelEventArgs e) { if (!ConfirmDiscard()) e.Cancel = true; }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 
-    sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals);
+    sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern);
 }
