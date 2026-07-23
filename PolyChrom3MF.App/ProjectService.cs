@@ -7,14 +7,14 @@ using System.Text.RegularExpressions;
 
 namespace PolyChrom3MF.App;
 
-public sealed record ProjectData(string SourcePath, int SelectedProposal, List<List<string>> Proposals, List<Dictionary<int,int>> Assignments, double Yaw, double Pitch, double Zoom, int Generation, bool FunMode = false, int ColorCount = 4, List<Dictionary<int, int[]>>? TriangleAssignments = null);
+public sealed record ProjectData(string SourcePath, int SelectedProposal, List<List<string>> Proposals, List<Dictionary<int,int>> Assignments, double Yaw, double Pitch, double Zoom, int Generation, bool FunMode = false, int ColorCount = 4, List<Dictionary<int, int[]>>? TriangleAssignments = null, PatternSettings? Pattern = null, List<string>? ProposalNames = null, List<string>? ProposalDescriptions = null);
 
 public sealed class ProjectService
 {
     const long MaxProjectSize = 1024L * 1024 * 1024;
     const long MaxSettingsSize = 128L * 1024 * 1024;
 
-    public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4)
+    public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null)
     {
         if (!File.Exists(document.Path)) throw new FileNotFoundException("Le modèle 3D source est introuvable.", document.Path);
         var extension = Path.GetExtension(document.Path).ToLowerInvariant();
@@ -22,7 +22,15 @@ public sealed class ProjectService
         var modelName = SafeFileName(Path.GetFileNameWithoutExtension(document.Path)) + extension;
         var modelEntryName = "model/" + modelName;
         var triangleAssignments = proposals.Select(p => p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone())).ToList();
-        var data = new ProjectData(modelEntryName, selected, proposals.Select(p => p.Colors.Select(c => c.Hex).ToList()).ToList(), proposals.Select(p => new Dictionary<int,int>(p.Assignments)).ToList(), yaw, pitch, zoom, generation, funMode, colorCount, triangleAssignments);
+        PatternSettings? storedPattern = null;
+        if (pattern is not null)
+        {
+            PatternService.ValidateSettings(pattern);
+            var image = new FileInfo(pattern.ImagePath);
+            if (!image.Exists || image.Length is <= 0 or > 32L * 1024 * 1024 || !image.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Le PNG du motif est absent ou trop volumineux.");
+            storedPattern = pattern with { ImagePath = "pattern/motif.png" };
+        }
+        var data = new ProjectData(modelEntryName, selected, proposals.Select(p => p.Colors.Select(c => c.Hex).ToList()).ToList(), proposals.Select(p => new Dictionary<int,int>(p.Assignments)).ToList(), yaw, pitch, zoom, generation, funMode, colorCount, triangleAssignments, storedPattern, proposals.Select(p => p.Name).ToList(), proposals.Select(p => p.Description).ToList());
         Validate(data);
 
         var fullPath = Path.GetFullPath(path);
@@ -34,11 +42,16 @@ public sealed class ProjectService
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create))
             {
                 var settings = archive.CreateEntry("project.json", CompressionLevel.Optimal);
-                using (var stream = settings.Open()) JsonSerializer.Serialize(stream, data, new JsonSerializerOptions { WriteIndented = true });
+                using (var stream = settings.Open()) JsonSerializer.Serialize(stream, data);
                 var model = archive.CreateEntry(modelEntryName, extension == ".3mf" ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
-                using var source = new FileStream(document.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                using var destination = model.Open();
-                source.CopyTo(destination);
+                using (var source = new FileStream(document.Path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var destination = model.Open()) source.CopyTo(destination);
+                if (pattern is not null)
+                {
+                    var patternEntry = archive.CreateEntry("pattern/motif.png", CompressionLevel.Optimal);
+                    using (var patternSource = new FileStream(pattern.ImagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    using (var patternDestination = patternEntry.Open()) patternSource.CopyTo(patternDestination);
+                }
             }
             File.Move(temporary, fullPath, true);
         }
@@ -71,12 +84,12 @@ public sealed class ProjectService
     static ProjectData LoadPortable(string projectPath, Stream input)
     {
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
-        if (archive.Entries.Count != 2) throw new InvalidDataException("Le projet PolyChrom contient des fichiers inattendus.");
         var settings = archive.GetEntry("project.json") ?? throw new InvalidDataException("Les réglages du projet sont absents.");
         if (settings.Length <= 0 || settings.Length > MaxSettingsSize) throw new InvalidDataException("Les réglages du projet sont invalides ou trop volumineux.");
         ProjectData data;
         using (var stream = settings.Open()) data = JsonSerializer.Deserialize<ProjectData>(stream) ?? throw new InvalidDataException("Projet PolyChrom invalide.");
         Validate(data);
+        if (archive.Entries.Count != (data.Pattern is null ? 2 : 3)) throw new InvalidDataException("Le projet PolyChrom contient des fichiers inattendus.");
 
         var modelEntry = archive.GetEntry(data.SourcePath);
         var modelName = Path.GetFileName(data.SourcePath);
@@ -88,19 +101,34 @@ public sealed class ProjectService
         var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PolyChrom 3MF", "SharedProjects", identity);
         Directory.CreateDirectory(folder);
         var extractedPath = Path.Combine(folder, modelName);
-        var temporary = extractedPath + ".tmp";
+        Extract(modelEntry, extractedPath);
+        PatternSettings? extractedPattern = null;
+        if (data.Pattern is not null)
+        {
+            if (data.Pattern.ImagePath != "pattern/motif.png") throw new InvalidDataException("Le chemin du motif intégré est invalide.");
+            var patternEntry = archive.GetEntry(data.Pattern.ImagePath);
+            if (patternEntry is null || patternEntry.Length is <= 0 or > 32L * 1024 * 1024) throw new InvalidDataException("Le motif PNG intégré est absent ou trop volumineux.");
+            var patternPath = Path.Combine(folder, "motif.png");
+            Extract(patternEntry, patternPath);
+            extractedPattern = data.Pattern with { ImagePath = patternPath };
+        }
+        return data with { SourcePath = extractedPath, Pattern = extractedPattern };
+    }
+
+    static void Extract(ZipArchiveEntry entry, string destinationPath)
+    {
+        var temporary = destinationPath + ".tmp";
         try
         {
-            using (var source = modelEntry.Open())
+            using (var source = entry.Open())
             using (var destination = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None)) source.CopyTo(destination);
-            File.Move(temporary, extractedPath, true);
+            File.Move(temporary, destinationPath, true);
         }
         catch
         {
             try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
             throw;
         }
-        return data with { SourcePath = extractedPath };
     }
 
     static ProjectData LoadLegacy(Stream input)
@@ -111,10 +139,28 @@ public sealed class ProjectService
         return data;
     }
 
+    internal static void ValidateForDocument(ProjectData data, ModelDocument document)
+    {
+        var objects = document.Objects.ToDictionary(obj => obj.Index);
+        if (data.Pattern is not null && data.Pattern.TargetObject >= 0 && !objects.ContainsKey(data.Pattern.TargetObject))
+            throw new InvalidDataException("L’objet ciblé par le motif n’existe pas dans le modèle intégré.");
+        foreach (var assignments in data.Assignments)
+            if (assignments.Keys.Any(key => !objects.ContainsKey(key))) throw new InvalidDataException("Le projet cible un objet absent du modèle intégré.");
+        if (data.TriangleAssignments is null) return;
+        foreach (var assignments in data.TriangleAssignments)
+            foreach (var pair in assignments)
+                if (!objects.TryGetValue(pair.Key, out var obj) || pair.Value.Length != obj.Triangles.Count)
+                    throw new InvalidDataException("Les affectations de triangles ne correspondent pas au modèle intégré.");
+    }
+
     static void Validate(ProjectData data)
     {
         if (data is null || string.IsNullOrWhiteSpace(data.SourcePath) || data.Proposals is null || data.Assignments is null || data.Proposals.Count is < 1 or > 4 || data.Assignments.Count > 4 || data.TriangleAssignments?.Count > 4 || data.SelectedProposal < 0 || data.SelectedProposal >= data.Proposals.Count || data.ColorCount is < 4 or > 32 || !double.IsFinite(data.Yaw) || !double.IsFinite(data.Pitch) || !double.IsFinite(data.Zoom) || data.Zoom <= 0)
             throw new InvalidDataException("Le projet contient des paramètres invalides.");
+        if (data.Pattern is not null) PatternService.ValidateSettings(data.Pattern);
+        if (data.ProposalNames is not null && data.ProposalNames.Count != data.Proposals.Count || data.ProposalDescriptions is not null && data.ProposalDescriptions.Count != data.Proposals.Count) throw new InvalidDataException("Les noms des propositions sont invalides.");
+        if (data.ProposalNames?.Any(value => InvalidText(value, 160)) == true || data.ProposalDescriptions?.Any(value => InvalidText(value, 1000)) == true)
+            throw new InvalidDataException("Les textes des propositions sont invalides.");
         for (var p = 0; p < data.Proposals.Count; p++)
         {
             var colors = data.Proposals[p];
@@ -129,4 +175,6 @@ public sealed class ProjectService
         var cleaned = string.Concat(value.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c)).Trim();
         return string.IsNullOrWhiteSpace(cleaned) ? "modele" : cleaned;
     }
+
+    static bool InvalidText(string? value, int maximumLength) => value is null || value.Length > maximumLength || value.Any(char.IsControl);
 }

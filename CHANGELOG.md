@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.0
+
+- Import d'un PNG avec transparence, taille, rotation, décalage et ciblage d'un objet ou de toute la figurine.
+- Quatre projections imprimables : frontale, cylindrique, répétée et triplanaire, réduites vers la palette de 4 à 32 filaments.
+- Intégration du PNG et de ses réglages dans les projets portables `.poly3mf`.
+- Coloration manuelle : sélection cumulative de petites, moyennes ou grandes zones puis application d'une couleur de la palette.
+- Nouveau pinceau « Une seule face » et rayons fortement réduits pour les zones très petites et petites.
+- Surlignage des triangles sélectionnés et restauration par annuler/rétablir.
+- Correction du chargement direct d'un modèle ou projet fourni sur la ligne de commande.
+- Durcissement du décodage PNG, des projets partagés et du téléchargement des mises à jour face aux fichiers malveillants ou anormalement volumineux.
+- Réinitialisation sûre de l’historique et des sélections lors d’un changement de modèle.
+
 ## 1.6.11
 
 - Durcissement de la lecture des projets partagés face aux réglages absents, aux affectations invalides et aux fichiers inattendus dans l'archive.

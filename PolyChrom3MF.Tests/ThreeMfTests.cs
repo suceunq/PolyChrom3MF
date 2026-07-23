@@ -1,6 +1,8 @@
 using System.IO;
 using System.IO.Compression;
 using System.Xml.Linq;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using PolyChrom3MF.App;
 
 namespace PolyChrom3MF.Tests;
@@ -33,6 +35,16 @@ public class ThreeMfTests
         var entry = zip.CreateEntry("3D/3dmodel.model");
         using (var writer = entry.Open()) model.Save(writer);
         if (extraEntry is not null) using (zip.CreateEntry(extraEntry).Open()) { }
+        return path;
+    }
+
+    static string Png()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".png");
+        var pixels = new byte[] { 0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255 };
+        var bitmap = BitmapSource.Create(2, 2, 96, 96, PixelFormats.Bgra32, null, pixels, 8);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write)) encoder.Save(stream);
         return path;
     }
 
@@ -110,6 +122,13 @@ public class ThreeMfTests
     [Fact] public void Analyse_une_release_github_securisee() { var update = UpdateService.ParseRelease("{\"tag_name\":\"v2.4.1\",\"html_url\":\"https://github.com/suceunq/PolyChrom3MF/releases/tag/v2.4.1\",\"body\":\"## Nouveautés\\n- Projets portables\",\"assets\":[{\"name\":\"PolyChrom3MF_Setup_x64.exe\",\"browser_download_url\":\"https://github.com/suceunq/PolyChrom3MF/releases/download/v2.4.1/PolyChrom3MF_Setup_x64.exe\",\"digest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"size\":123456}]}"); Assert.Equal(new Version(2, 4, 1), update.Version); Assert.Equal("v2.4.1", update.Tag); Assert.Equal(123456, update.Size); Assert.Contains("Projets portables", update.ReleaseNotes); }
     [Fact] public void Compare_signature_mise_a_jour_sans_fuite_temporelle() { Assert.True(UpdateService.DigestMatches(new string('A', 64), new string('a', 64))); Assert.False(UpdateService.DigestMatches(new string('A', 64), new string('B', 64))); }
     [Fact] public void Resume_de_mise_a_jour_possede_un_texte_de_secours() { Assert.False(string.IsNullOrWhiteSpace(UpdateService.ReleaseSummary("**Full Changelog**: https://github.com/exemple"))); }
+    [Fact] public void Applique_un_png_sur_les_triangles_avec_la_palette_active() { var document = FunDocument(); var proposal = new PaletteService().Create(document, colorCount: 4)[0]; var result = new PatternService().Apply(document, proposal, new PatternSettings(Png())); Assert.True(result.ColoredTriangles > 0); Assert.All(proposal.TriangleAssignments.SelectMany(pair => pair.Value), color => Assert.InRange(color, 0, 3)); }
+    [Fact] public void Projet_portable_embarque_le_png_du_motif() { var source = Sample(); var document = new ThreeMfService().Read(source); var proposals = new PaletteService().Create(document); var png = Png(); var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); new ProjectService().Save(path, document, proposals, 0, 1, 2, 3, pattern: new PatternSettings(png, PatternMode.Repeated, 75, DisplayName: "motif-test.png")); File.Delete(png); var loaded = new ProjectService().Load(path); Assert.NotNull(loaded.Pattern); Assert.True(File.Exists(loaded.Pattern!.ImagePath)); Assert.Equal(PatternMode.Repeated, loaded.Pattern.Mode); Assert.Equal("motif-test.png", loaded.Pattern.DisplayName); }
+    [Fact] public void Motif_png_est_exporte_dans_un_3mf_valide() { var source = Sample(4); var service = new ThreeMfService(); var document = service.Read(source); var proposal = new PaletteService().Create(document)[0]; new PatternService().Apply(document, proposal, new PatternSettings(Png(), PatternMode.Cylindrical)); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, proposal, output); var reopened = service.Read(output); Assert.Equal(document.TriangleCount, reopened.TriangleCount); Assert.True(reopened.ExistingColorCount >= 1); }
+    [Fact] public void Refuse_un_motif_ciblant_un_objet_absent() { var document = FunDocument(); var proposal = new PaletteService().Create(document)[0]; Assert.Throws<InvalidDataException>(() => new PatternService().Apply(document, proposal, new PatternSettings(Png(), TargetObject: 999))); }
+    [Fact] public void Refuse_un_nom_de_motif_demesure() { Assert.Throws<InvalidDataException>(() => PatternService.ValidateSettings(new PatternSettings("motif.png", DisplayName: new string('x', 261)))); }
+    [Fact] public void Refuse_des_affectations_ne_correspondant_pas_au_modele() { var document = FunDocument(); var data = new ProjectData("model/test.3mf", 0, [["#000000", "#111111", "#222222", "#333333"]], [new Dictionary<int, int> { [999] = 0 }], 0, 0, 1, 0); Assert.Throws<InvalidDataException>(() => ProjectService.ValidateForDocument(data, document)); }
+    [Fact] public void Selection_de_zone_contient_le_triangle_clique() { var obj = FunDocument().Objects[0]; var triangle = obj.Triangles[10]; var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C]; var center = new System.Windows.Media.Media3D.Point3D((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3); Assert.Contains(10, MainWindow.SelectNearbyTriangles(obj, 10, center, 2)); }
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }
     [Fact] public void Convertit_stl_en_3mf_valide() { var d = new StlService().Read(AsciiStl()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); new ThreeMfService().Export(d, new PaletteService().Create(1)[0], output); Assert.Equal(1, new ThreeMfService().Read(output).TriangleCount); }
