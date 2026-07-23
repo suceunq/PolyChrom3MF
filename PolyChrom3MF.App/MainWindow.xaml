@@ -27,7 +27,6 @@
     </ToolBar>
 
     <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
-      <ProgressBar x:Name="Progress" Width="120" Height="14" IsIndeterminate="False" Visibility="Collapsed"/>
       <TextBlock x:Name="StatusText" Text="Prêt — importez un fichier 3MF ou STL." Margin="8,0"/><Separator/><TextBlock x:Name="StatsText"/>
     </StatusBar>
 
