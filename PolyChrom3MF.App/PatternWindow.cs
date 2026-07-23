@@ -24,7 +24,8 @@ public sealed class PatternWindow : Window
     readonly Slider _offsetX = Slider(-100, 100, 0);
     readonly Slider _offsetY = Slider(-100, 100, 0);
     readonly CheckBox _variants = new() { Content = new TextBlock { Text = "Créer quatre propositions avec quatre projections différentes", TextWrapping = TextWrapping.Wrap }, IsChecked = true };
-    readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(280) };
+    readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
+    readonly TextBlock _previewStatus = new() { Text = "L’aperçu se met à jour au relâchement du curseur.", Margin = new Thickness(0, 7, 0, 0) };
 
     public PatternSettings Value { get; private set; }
     public event Action<PatternSettings>? PreviewRequested;
@@ -40,7 +41,7 @@ public sealed class PatternWindow : Window
         _scale.Value = Value.Scale; _rotation.Value = Value.Rotation; _offsetX.Value = Value.OffsetX; _offsetY.Value = Value.OffsetY; _variants.IsChecked = Value.FourVariants;
         _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); Value = ReadSettings(); PreviewRequested?.Invoke(Value); };
         _mode.SelectionChanged += (_, _) => QueuePreview(); _target.SelectionChanged += (_, _) => QueuePreview();
-        _scale.ValueChanged += (_, _) => QueuePreview(); _rotation.ValueChanged += (_, _) => QueuePreview(); _offsetX.ValueChanged += (_, _) => QueuePreview(); _offsetY.ValueChanged += (_, _) => QueuePreview();
+        TrackSlider(_scale); TrackSlider(_rotation); TrackSlider(_offsetX); TrackSlider(_offsetY);
         _variants.Checked += (_, _) => QueuePreview(); _variants.Unchecked += (_, _) => QueuePreview();
         Loaded += (_, _) => QueuePreview();
         Closed += (_, _) => _previewTimer.Stop();
@@ -53,6 +54,8 @@ public sealed class PatternWindow : Window
         panel.Children.Add(new Border { Background = (System.Windows.Media.Brush)Application.Current.Resources["InputBackground"], BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["PanelBorder"], BorderThickness = new Thickness(1), Padding = new Thickness(8), Child = preview });
         panel.Children.Add(Field("Application", _target)); panel.Children.Add(Field("Projection", _mode)); panel.Children.Add(_variants);
         panel.Children.Add(SliderField("Taille du motif", _scale, "%")); panel.Children.Add(SliderField("Rotation", _rotation, "°")); panel.Children.Add(SliderField("Décalage horizontal", _offsetX, "%")); panel.Children.Add(SliderField("Décalage vertical", _offsetY, "%"));
+        _previewStatus.Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"];
+        panel.Children.Add(_previewStatus);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 18, 0, 0) };
         var cancel = new Button { Content = "Annuler", IsCancel = true, MinWidth = 90 }; var apply = new Button { Content = "Appliquer le motif", IsDefault = true, MinWidth = 145 };
         apply.Click += Apply; buttons.Children.Add(cancel); buttons.Children.Add(apply); panel.Children.Add(buttons);
@@ -73,6 +76,23 @@ public sealed class PatternWindow : Window
         if (!IsLoaded) return;
         _previewTimer.Stop();
         _previewTimer.Start();
+    }
+
+    void TrackSlider(Slider slider)
+    {
+        // A drag can emit dozens of ValueChanged events. Keep the thumb fluid and
+        // calculate the expensive 3D preview only once when the user releases it.
+        slider.ValueChanged += (_, _) => { if (!slider.IsMouseCaptureWithin) QueuePreview(); };
+        slider.PreviewMouseLeftButtonUp += (_, _) => QueuePreview();
+        slider.LostMouseCapture += (_, _) => QueuePreview();
+    }
+
+    public void SetPreviewStatus(string text, bool error = false)
+    {
+        _previewStatus.Text = text;
+        _previewStatus.Foreground = error
+            ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(255, 115, 115))
+            : (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"];
     }
 
     static FrameworkElement Field(string label, Control control)

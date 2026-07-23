@@ -78,7 +78,7 @@ public sealed class ThreeMfService
         var workingDestination = Path.Combine(destinationFolder, $".{Path.GetFileNameWithoutExtension(fullDestination)}.{Guid.NewGuid():N}.tmp.3mf");
         try
         {
-        if (document.SourceFormat == "STL") CreatePackage(workingDestination, document.Xml);
+        if (document.SourceFormat == "STL") CreatePackage(workingDestination, BuildStlModel(document));
         else File.Copy(document.Path, workingDestination, true);
 
         using (var zip = ZipFile.Open(workingDestination, ZipArchiveMode.Update))
@@ -142,6 +142,30 @@ public sealed class ThreeMfService
         {
             try { if (File.Exists(workingDestination)) File.Delete(workingDestination); } catch { }
         }
+    }
+
+    static XDocument BuildStlModel(ModelDocument document)
+    {
+        var resources = new XElement(Core + "resources");
+        var build = new XElement(Core + "build");
+        foreach (var modelObject in document.Objects)
+        {
+            var mesh = new XElement(Core + "mesh",
+                new XElement(Core + "vertices", modelObject.Vertices.Select(vertex => new XElement(Core + "vertex",
+                    new XAttribute("x", vertex.X.ToString("R", CultureInfo.InvariantCulture)),
+                    new XAttribute("y", vertex.Y.ToString("R", CultureInfo.InvariantCulture)),
+                    new XAttribute("z", vertex.Z.ToString("R", CultureInfo.InvariantCulture))))),
+                new XElement(Core + "triangles", modelObject.Triangles.Select(triangle => new XElement(Core + "triangle",
+                    new XAttribute("v1", triangle.A), new XAttribute("v2", triangle.B), new XAttribute("v3", triangle.C)))));
+            resources.Add(new XElement(Core + "object", new XAttribute("id", modelObject.Id), new XAttribute("type", "model"), mesh));
+            build.Add(new XElement(Core + "item", new XAttribute("objectid", modelObject.Id)));
+        }
+        return new XDocument(new XElement(Core + "model",
+            new XAttribute("unit", "millimeter"),
+            new XAttribute(XNamespace.Xml + "lang", "fr-FR"),
+            new XElement(Core + "metadata", new XAttribute("name", "Application"), "PolyChrom 3MF"),
+            resources,
+            build));
     }
 
     static void CreatePackage(string destination, XDocument model)
@@ -296,8 +320,8 @@ public sealed class ThreeMfService
     sealed record ModelPart(string Path, XDocument Xml, double UnitScale, Dictionary<string, XElement> Objects);
 }
 
-public sealed record Vertex(double X, double Y, double Z);
-public sealed record Triangle(int A, int B, int C);
+public readonly record struct Vertex(double X, double Y, double Z);
+public readonly record struct Triangle(int A, int B, int C);
 public sealed record ModelObject(int Index, string Id, List<Vertex> Vertices, List<Triangle> Triangles, string PartPath)
 {
     public override string ToString() => $"Objet {Id} — {Triangles.Count:N0} triangles";

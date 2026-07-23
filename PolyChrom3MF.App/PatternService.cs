@@ -19,6 +19,9 @@ public sealed class PatternService
         if (settings.TargetObject >= 0 && document.Objects.All(obj => obj.Index != settings.TargetObject))
             throw new InvalidDataException("L’objet ciblé par le motif n’existe pas dans ce modèle.");
         var image = Load(settings.ImagePath);
+        // Parsing hexadecimal WPF colors for every triangle was the dominant cost
+        // on dense models. Resolve the printable palette once for this whole pass.
+        var palette = proposal.Colors.Select(color => color.Color).ToArray();
         var mode = modeOverride ?? settings.Mode;
         var bounds = Bounds(document);
         var colored = 0; var transparent = 0;
@@ -44,7 +47,7 @@ public sealed class PatternService
                 v = repeats ? Wrap(v) : Math.Clamp(v, 0, 1);
                 var pixel = image.Pixel(u, v);
                 if (pixel.A < settings.AlphaThreshold) { transparent++; continue; }
-                assignments[triangleIndex] = Nearest(pixel, proposal.Colors);
+                assignments[triangleIndex] = Nearest(pixel, palette);
                 colored++;
             }
         }
@@ -175,12 +178,12 @@ public sealed class PatternService
         return (u, v);
     }
 
-    static int Nearest(Pixel pixel, IReadOnlyList<PaletteColor> colors)
+    static int Nearest(Pixel pixel, IReadOnlyList<System.Windows.Media.Color> colors)
     {
         var best = 0; var bestDistance = double.MaxValue;
         for (var i = 0; i < colors.Count; i++)
         {
-            var color = colors[i].Color; var dr = pixel.R - color.R; var dg = pixel.G - color.G; var db = pixel.B - color.B;
+            var color = colors[i]; var dr = pixel.R - color.R; var dg = pixel.G - color.G; var db = pixel.B - color.B;
             var distance = dr * dr * .30 + dg * dg * .59 + db * db * .11;
             if (distance < bestDistance) { bestDistance = distance; best = i; }
         }
