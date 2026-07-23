@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using Control = System.Windows.Controls.Control;
@@ -23,21 +24,31 @@ public sealed class PatternWindow : Window
     readonly Slider _offsetX = Slider(-100, 100, 0);
     readonly Slider _offsetY = Slider(-100, 100, 0);
     readonly CheckBox _variants = new() { Content = new TextBlock { Text = "Créer quatre propositions avec quatre projections différentes", TextWrapping = TextWrapping.Wrap }, IsChecked = true };
+    readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(280) };
 
     public PatternSettings Value { get; private set; }
+    public event Action<PatternSettings>? PreviewRequested;
 
-    public PatternWindow(string imagePath, IReadOnlyList<ModelObject> objects, PatternSettings? current = null)
+    public PatternWindow(string imagePath, IReadOnlyList<ModelObject> objects, PatternSettings? current = null, string? displayName = null)
     {
         _imagePath = imagePath;
-        Value = current is null ? new PatternSettings(imagePath, DisplayName: Path.GetFileName(imagePath)) : current with { ImagePath = imagePath, DisplayName = Path.GetFileName(imagePath) };
-        Title = "Appliquer un motif PNG"; Width = 650; MinHeight = 700; MaxHeight = Math.Max(700, SystemParameters.WorkArea.Height * .92); SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        displayName ??= Path.GetFileName(imagePath);
+        Value = current is null ? new PatternSettings(imagePath, DisplayName: displayName) : current with { ImagePath = imagePath, DisplayName = displayName };
+        Title = "Appliquer un motif image"; Width = 650; MinHeight = 700; MaxHeight = Math.Max(700, SystemParameters.WorkArea.Height * .92); SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         _mode.ItemsSource = new[] { new Option<PatternMode>("Projection frontale", PatternMode.Front), new Option<PatternMode>("Enveloppement cylindrique", PatternMode.Cylindrical), new Option<PatternMode>("Motif répété", PatternMode.Repeated), new Option<PatternMode>("Projection triplanaire", PatternMode.Triplanar) }; _mode.DisplayMemberPath = nameof(Option<PatternMode>.Label); _mode.SelectedIndex = (int)Value.Mode;
         var targets = new List<Option<int>> { new("Toute la figurine", -1) }; targets.AddRange(objects.Select(obj => new Option<int>(obj.ToString(), obj.Index))); _target.ItemsSource = targets; _target.DisplayMemberPath = nameof(Option<int>.Label); _target.SelectedItem = targets.FirstOrDefault(item => item.Value == Value.TargetObject) ?? targets[0];
         _scale.Value = Value.Scale; _rotation.Value = Value.Rotation; _offsetX.Value = Value.OffsetX; _offsetY.Value = Value.OffsetY; _variants.IsChecked = Value.FourVariants;
+        _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); Value = ReadSettings(); PreviewRequested?.Invoke(Value); };
+        _mode.SelectionChanged += (_, _) => QueuePreview(); _target.SelectionChanged += (_, _) => QueuePreview();
+        _scale.ValueChanged += (_, _) => QueuePreview(); _rotation.ValueChanged += (_, _) => QueuePreview(); _offsetX.ValueChanged += (_, _) => QueuePreview(); _offsetY.ValueChanged += (_, _) => QueuePreview();
+        _variants.Checked += (_, _) => QueuePreview(); _variants.Unchecked += (_, _) => QueuePreview();
+        Loaded += (_, _) => QueuePreview();
+        Closed += (_, _) => _previewTimer.Stop();
 
         var panel = new StackPanel { Margin = new Thickness(24) };
-        panel.Children.Add(new TextBlock { Text = "MOTIF PNG", FontSize = 22, FontWeight = FontWeights.Bold });
+        panel.Children.Add(new TextBlock { Text = "MOTIF IMAGE", FontSize = 22, FontWeight = FontWeights.Bold });
         panel.Children.Add(new TextBlock { Text = "Le motif sera converti vers les couleurs de filament de chaque proposition. Les pixels transparents conservent la coloration existante.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 14), Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"] });
+        panel.Children.Add(new TextBlock { Text = "Aperçu en direct : déplacez les curseurs pour voir le résultat sur la figurine derrière cette fenêtre.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), FontWeight = FontWeights.SemiBold, Foreground = (System.Windows.Media.Brush)Application.Current.Resources["Accent"] });
         var preview = new Image { Source = LoadPreview(imagePath), Height = 190, Stretch = System.Windows.Media.Stretch.Uniform, Margin = new Thickness(0, 0, 0, 14) };
         panel.Children.Add(new Border { Background = (System.Windows.Media.Brush)Application.Current.Resources["InputBackground"], BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["PanelBorder"], BorderThickness = new Thickness(1), Padding = new Thickness(8), Child = preview });
         panel.Children.Add(Field("Application", _target)); panel.Children.Add(Field("Projection", _mode)); panel.Children.Add(_variants);
@@ -50,8 +61,18 @@ public sealed class PatternWindow : Window
 
     void Apply(object sender, RoutedEventArgs e)
     {
-        Value = new PatternSettings(_imagePath, ((Option<PatternMode>)_mode.SelectedItem).Value, _scale.Value, _rotation.Value, _offsetX.Value, _offsetY.Value, ((Option<int>)_target.SelectedItem).Value, _variants.IsChecked == true, DisplayName: Path.GetFileName(_imagePath));
+        _previewTimer.Stop();
+        Value = ReadSettings();
         DialogResult = true;
+    }
+
+    PatternSettings ReadSettings() => new(_imagePath, ((Option<PatternMode>)_mode.SelectedItem).Value, _scale.Value, _rotation.Value, _offsetX.Value, _offsetY.Value, ((Option<int>)_target.SelectedItem).Value, _variants.IsChecked == true, DisplayName: Value.DisplayName);
+
+    void QueuePreview()
+    {
+        if (!IsLoaded) return;
+        _previewTimer.Stop();
+        _previewTimer.Start();
     }
 
     static FrameworkElement Field(string label, Control control)

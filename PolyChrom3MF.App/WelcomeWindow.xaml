@@ -34,7 +34,7 @@
                    Foreground="#D7DCE5"
                    FontSize="14"
                    LineHeight="22"
-                   Text="Importez vos modèles 3MF ou STL, comparez quatre propositions multicolores, ajoutez vos motifs PNG et exportez un fichier prêt à ouvrir dans votre slicer."/>
+                   Text="Importez vos modèles 3MF ou STL, comparez quatre propositions multicolores, ajoutez vos motifs PNG ou JPG et exportez un fichier prêt à ouvrir dans votre slicer."/>
 
         <Border Margin="0,20,0,16"
                 Padding="16"

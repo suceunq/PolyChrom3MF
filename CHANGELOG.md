@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.2
+
+- Aperçu en direct du motif sur la figurine pendant le réglage de la projection, de la taille, de la rotation et des décalages.
+- Annulation automatique des anciens calculs d’aperçu pour conserver des curseurs réactifs sur les modèles complexes.
+- Restauration exacte de la coloration précédente lorsque la fenêtre du motif est annulée.
+- Nouveau pinceau fluide avec tracé instantané et calcul géométrique différé au relâchement.
+- Sélection limitée à la surface visible afin de ne pas peindre l’arrière de la figurine.
+- Correction de l’erreur WPF inter-thread lors de l’application du pinceau.
+- Amélioration de l’assemblage, du recentrage et de la rotation à 360° des modèles 3MF complexes.
+
 ## 1.7.1
 
 - Nouvelle fenêtre de bienvenue avec présentation claire des fonctions de PolyChrom 3MF.

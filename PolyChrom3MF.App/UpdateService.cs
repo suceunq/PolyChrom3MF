@@ -10,6 +10,15 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 
 public sealed class UpdateService
 {
+    public const string BundledReleaseNotes =
+        "Aperçu en direct du motif pendant tous les réglages.\n" +
+        "Nouveau pinceau fluide avec tracé instantané sur les modèles complexes.\n" +
+        "Correction de l’erreur inter-thread lors de l’application du pinceau.\n" +
+        "La peinture reste limitée à la surface visible de la figurine.\n" +
+        "Annuler un motif restaure exactement la coloration précédente.\n" +
+        "Assemblage, recentrage et rotation à 360° des modèles améliorés.\n" +
+        "Corrections de stabilité et de performances.";
+
     const string LatestReleaseApi = "https://api.github.com/repos/suceunq/PolyChrom3MF/releases/latest";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";
     readonly HttpClient _client;

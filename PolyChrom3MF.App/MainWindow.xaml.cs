@@ -28,9 +28,12 @@ public partial class MainWindow : Window
     readonly UpdateService _updateService = new();
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
     readonly Dictionary<int, HashSet<int>> _paintSelection = [];
+    readonly Dictionary<int, Dictionary<(int A, int B, int C), int>> _triangleLookup = [];
+    readonly List<System.Windows.Point> _paintStrokePoints = [];
     readonly Stack<EditorState> _undo = [];
     readonly Stack<EditorState> _redo = [];
     AppSettings _settings;
+    readonly bool _settingsExistedAtStartup;
     ModelDocument? _doc;
     List<ColorProposal> _proposals = [];
     List<ColorProposal>? _beforePatternProposals;
@@ -38,23 +41,31 @@ public partial class MainWindow : Window
     PatternSettings? _pattern;
     System.Windows.Point _last;
     double _yaw = -40, _pitch = -25, _zoom = 1;
-    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked;
+    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _shutdownForUpdate;
     int _generation, _colorCount = 4;
     string? _lastSlicerFile;
-    Point3D _center;
+    Point3D _center, _modelCenter;
     double _radius = 100;
 
     public MainWindow()
     {
         InitializeComponent();
         ApplyStandardMenuColors(MainMenu);
+        _settingsExistedAtStartup = File.Exists(_settingsService.FilePath);
         _settings = _settingsService.Load();
+        if (!_settingsExistedAtStartup)
+        {
+            _settings.LastSeenVersion = UpdateService.CurrentVersion().ToString(3);
+            _settings.LastReleaseNotes = UpdateService.BundledReleaseNotes;
+            _settingsService.Save(_settings);
+        }
         _colorCount = Math.Clamp(_settings.ColorCount, 4, 32);
         EnsurePreferredSlicer();
         BuildScene();
         ApplyTheme();
         Loaded += async (_, _) =>
         {
+            ShowWhatsNewAfterUpdate();
             var startupFile = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(File.Exists);
             if (startupFile is null)
             {
@@ -82,7 +93,7 @@ public partial class MainWindow : Window
         try
         {
             _doc = await Task.Run(() => Path.GetExtension(path).Equals(".stl", StringComparison.OrdinalIgnoreCase) ? _stlService.Read(path) : _service.Read(path));
-            _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
+            _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
             _lastSlicerFile = path; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             FileText.Text = Path.GetFileName(path);
             InfoText.Text = $"Format : {_doc.SourceFormat}\n{_doc.Objects.Count} objet(s) · {_doc.TriangleCount:N0} triangles\nUnité : {_doc.Unit}\nComposants : {_doc.ComponentCount}";
@@ -112,10 +123,18 @@ public partial class MainWindow : Window
 
     void SetBusy(bool busy, string? text = null)
     {
-        Progress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-        Progress.IsIndeterminate = busy;
         if (text is not null) StatusText.Text = text;
+        SetActivity(busy, text);
         IsEnabled = !busy;
+    }
+
+    void SetActivity(bool visible, string? text = null, bool determinate = false, double value = 0)
+    {
+        ActivityOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (!visible) return;
+        if (!string.IsNullOrWhiteSpace(text)) ActivityText.Text = text;
+        ActivityProgress.IsIndeterminate = !determinate;
+        ActivityProgress.Value = Math.Clamp(value, 0, 100);
     }
 
     static void ApplyStandardMenuColors(ItemsControl menu)
@@ -265,28 +284,59 @@ public partial class MainWindow : Window
 
     async void ImportPattern_Click(object sender, RoutedEventArgs e)
     {
-        if (_doc is null || _selected is null) { MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Motif PNG"); return; }
-        var file = new OpenFileDialog { Filter = "Images PNG (*.png)|*.png", CheckFileExists = true, Title = "Choisir le motif à appliquer" };
+        if (_doc is null || _selected is null) { MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Motif image"); return; }
+        var file = new OpenFileDialog { Filter = "Images compatibles (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|Images PNG (*.png)|*.png|Images JPEG (*.jpg;*.jpeg)|*.jpg;*.jpeg", CheckFileExists = true, Title = "Choisir le motif à appliquer" };
         if (file.ShowDialog() != true) return;
         PatternWindow dialog;
+        string preparedImage;
+        var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected));
+        var proposalsBeforePreview = _proposals;
+        var previewBase = (_beforePatternProposals ?? _proposals).Select(Clone).ToList();
+        CancellationTokenSource? previewCancellation = null;
+        var previewRevision = 0;
         try
         {
             PatternService.ValidateImage(file.FileName);
-            dialog = new PatternWindow(file.FileName, _doc.Objects, _pattern) { Owner = this };
-            if (dialog.ShowDialog() != true) return;
+            var options = new ImageImportOptionsWindow(file.FileName) { Owner = this };
+            if (options.ShowDialog() != true) return;
+            // Read every WPF control value on the UI thread before starting image processing.
+            var removeBackground = options.RemoveBackground;
+            var tolerance = options.Tolerance;
+            var sourceImage = file.FileName;
+            preparedImage = await Task.Run(() => PatternService.PrepareImage(sourceImage, removeBackground, tolerance));
+            dialog = new PatternWindow(preparedImage, _doc.Objects, _pattern, Path.GetFileName(file.FileName)) { Owner = this };
+            dialog.PreviewRequested += PreviewPattern;
+            var accepted = dialog.ShowDialog() == true;
+            Interlocked.Increment(ref previewRevision);
+            previewCancellation?.Cancel();
+            dialog.PreviewRequested -= PreviewPattern;
+            _proposals = proposalsBeforePreview;
+            SelectProposal(selectedIndex);
+            RefreshBindings();
+            if (!accepted)
+            {
+                Render();
+                StatusText.Text = "Aperçu du motif annulé : la coloration précédente a été restaurée.";
+                return;
+            }
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "PNG impossible à ouvrir", MessageBoxButton.OK, MessageBoxImage.Error);
+            Interlocked.Increment(ref previewRevision);
+            previewCancellation?.Cancel();
+            _proposals = proposalsBeforePreview;
+            SelectProposal(selectedIndex);
+            RefreshBindings();
+            Render();
+            MessageBox.Show(ex.Message, "Image impossible à ouvrir", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
-        var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected));
         PushUndo();
         var previousBeforePattern = _beforePatternProposals;
         _beforePatternProposals ??= _proposals.Select(Clone).ToList();
         var working = _beforePatternProposals.Select(Clone).ToList();
         var settings = dialog.Value;
-        SetBusy(true, "Application du motif PNG sur les triangles…");
+        SetBusy(true, "Application du motif image sur les triangles…");
         try
         {
             var results = await Task.Run(() =>
@@ -298,65 +348,112 @@ public partial class MainWindow : Window
                     for (var i = 0; i < Math.Min(working.Count, modes.Length); i++)
                     {
                         list.Add(_patternService.Apply(_doc, working[i], settings, modes[i]));
-                        working[i] = Rename(working[i], $"PNG {i + 1} — {PatternModeName(modes[i])}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(modes[i]).ToLowerInvariant()}");
+                        working[i] = Rename(working[i], $"Image {i + 1} — {PatternModeName(modes[i])}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(modes[i]).ToLowerInvariant()}");
                     }
                 }
-                else { list.Add(_patternService.Apply(_doc, working[selectedIndex], settings)); working[selectedIndex] = Rename(working[selectedIndex], $"PNG — {PatternModeName(settings.Mode)}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(settings.Mode).ToLowerInvariant()}"); }
+                else { list.Add(_patternService.Apply(_doc, working[selectedIndex], settings)); working[selectedIndex] = Rename(working[selectedIndex], $"Image — {PatternModeName(settings.Mode)}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(settings.Mode).ToLowerInvariant()}"); }
                 return list;
             });
-            var cachedImage = CachePatternImage(settings.ImagePath);
-            _proposals = working; _pattern = settings with { ImagePath = cachedImage }; SelectProposal(selectedIndex); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true;
+            _proposals = working; _pattern = settings; SelectProposal(selectedIndex); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true;
             var count = results.Sum(result => result.ColoredTriangles);
-            StatusText.Text = $"Motif PNG appliqué sur {count:N0} triangles avec {_colorCount} couleurs imprimables.";
+            StatusText.Text = $"Motif image appliqué sur {count:N0} triangles avec {_colorCount} couleurs imprimables.";
         }
         catch (Exception ex)
         {
             _beforePatternProposals = previousBeforePattern;
-            MessageBox.Show(ex.Message, "Motif PNG impossible à appliquer", MessageBoxButton.OK, MessageBoxImage.Error);
-            StatusText.Text = "Échec de l’application du motif PNG.";
+            MessageBox.Show(ex.Message, "Motif image impossible à appliquer", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Échec de l’application du motif image.";
         }
         finally { SetBusy(false); }
+
+        async void PreviewPattern(PatternSettings settings)
+        {
+            var revision = Interlocked.Increment(ref previewRevision);
+            var cancellation = new CancellationTokenSource();
+            var previousCancellation = previewCancellation;
+            previewCancellation = cancellation;
+            previousCancellation?.Cancel();
+            try
+            {
+                StatusText.Text = "Calcul de l’aperçu du motif…";
+                var proposal = Clone(previewBase[selectedIndex]);
+                var previewMode = settings.FourVariants
+                    ? new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar }[Math.Min(selectedIndex, 3)]
+                    : settings.Mode;
+                var result = await Task.Run(() => _patternService.Apply(_doc, proposal, settings, previewMode, cancellation.Token), cancellation.Token);
+                if (cancellation.IsCancellationRequested || revision != previewRevision) return;
+                var preview = previewBase.Select(Clone).ToList();
+                preview[selectedIndex] = Rename(proposal, $"Aperçu — {PatternModeName(previewMode)}", $"Aperçu en direct · {PatternModeName(previewMode).ToLowerInvariant()}");
+                _proposals = preview;
+                SelectProposal(selectedIndex);
+                RefreshBindings();
+                Render();
+                StatusText.Text = $"Aperçu actualisé sur {result.ColoredTriangles:N0} triangles.";
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                if (revision == previewRevision) StatusText.Text = $"Aperçu impossible : {ex.Message}";
+            }
+            finally
+            {
+                if (ReferenceEquals(previewCancellation, cancellation)) previewCancellation = null;
+                cancellation.Dispose();
+            }
+        }
     }
 
     void RemovePattern_Click(object sender, RoutedEventArgs e)
     {
-        if (_pattern is null) { StatusText.Text = "Aucun motif PNG à retirer."; return; }
+        if (_pattern is null) { StatusText.Text = "Aucun motif image à retirer."; return; }
         PushUndo(); var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected!));
         if (_beforePatternProposals is not null) _proposals = _beforePatternProposals.Select(Clone).ToList();
         else { _generation++; GenerateProposals(); }
-        _pattern = null; _beforePatternProposals = null; SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif PNG retiré.";
+        _pattern = null; _beforePatternProposals = null; SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif image retiré.";
     }
 
     static ColorProposal Rename(ColorProposal proposal, string name, string description) => new(name, description, proposal.Colors.Select(color => new PaletteColor(color.Name, color.Hex)).ToList(), new Dictionary<int, int>(proposal.Assignments)) { TriangleAssignments = proposal.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
     static string PatternModeName(PatternMode mode) => mode switch { PatternMode.Front => "Projection frontale", PatternMode.Cylindrical => "Enveloppement", PatternMode.Repeated => "Motif répété", _ => "Triplanaire" };
     void UpdatePatternText() { if (PatternText is null) return; PatternText.Text = _pattern is null ? "Aucun motif importé" : $"{(_pattern.DisplayName ?? Path.GetFileName(_pattern.ImagePath))} · {(_pattern.FourVariants ? "4 projections" : PatternModeName(_pattern.Mode))} · taille {_pattern.Scale:0}%"; }
-    static string CachePatternImage(string source)
-    {
-        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PolyChrom 3MF", "PatternCache"); Directory.CreateDirectory(folder);
-        var destination = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".png"); File.Copy(source, destination, false); return destination;
-    }
-
     void PaintMode_Changed(object sender, RoutedEventArgs e)
     {
         if (PaintMode is null || PaintModeMenu is null) return;
         var enabled = sender == PaintModeMenu ? PaintModeMenu.IsChecked : PaintMode.IsChecked == true;
         if (PaintMode.IsChecked != enabled) PaintMode.IsChecked = enabled;
         if (PaintModeMenu.IsChecked != enabled) PaintModeMenu.IsChecked = enabled;
-        StatusText.Text = enabled ? "Sélection de zones active : cliquez sur plusieurs endroits du modèle." : "Sélection de zones désactivée.";
+        if (!enabled)
+        {
+            _paintStroke = false;
+            Viewer?.ReleaseMouseCapture();
+        }
+        UpdateBrushCursorVisibility();
+        StatusText.Text = enabled ? "Mode zones actif : choisissez Face par face ou Pinceau fluide. Clic droit pour tourner." : "Sélection de zones désactivée.";
+    }
+
+    void PaintTool_Changed(object sender, SelectionChangedEventArgs e) => UpdateBrushCursorVisibility();
+    void UpdateBrushCursorVisibility()
+    {
+        if (PaintBrushCursor is null || PaintMode is null || PaintTool is null) return;
+        PaintBrushCursor.Visibility = PaintMode.IsChecked == true && PaintTool.SelectedIndex == 1 && Viewer.IsMouseOver ? Visibility.Visible : Visibility.Collapsed;
     }
 
     async Task SelectPaintZone(RayMeshGeometry3DHitTestResult hit, GeometryModel3D model)
     {
         if (_doc is null || !_modelObjects.TryGetValue(model, out var objectIndex)) return;
         var obj = _doc.Objects.FirstOrDefault(item => item.Index == objectIndex); if (obj is null) return;
-        var sourceTriangle = obj.Triangles.FindIndex(triangle => SameTriangle(triangle, hit.VertexIndex1, hit.VertexIndex2, hit.VertexIndex3));
+        var sourceTriangle = FindSourceTriangle(obj, hit);
         if (sourceTriangle < 0) return;
-        var brushScale = PaintBrushSize.SelectedIndex switch { 0 => 0, 1 => .003, 2 => .008, 3 => .02, _ => .05 };
-        var diagonal = Math.Sqrt(Math.Pow(obj.Vertices.Max(v => v.X) - obj.Vertices.Min(v => v.X), 2) + Math.Pow(obj.Vertices.Max(v => v.Y) - obj.Vertices.Min(v => v.Y), 2) + Math.Pow(obj.Vertices.Max(v => v.Z) - obj.Vertices.Min(v => v.Z), 2));
+        var brushScale = PaintTool.SelectedIndex == 0 ? 0 : PaintBrushSize.SelectedIndex switch { 0 => .0015, 1 => .003, 2 => .008, 3 => .02, _ => .05 };
         SetBusy(true, "Sélection de la zone…");
         try
         {
-            var selected = brushScale == 0 ? new HashSet<int> { sourceTriangle } : await Task.Run(() => SelectNearbyTriangles(obj, sourceTriangle, hit.PointHit, Math.Max(.0001, diagonal * brushScale)));
+            HashSet<int> selected;
+            if (brushScale == 0) selected = [sourceTriangle];
+            else
+            {
+                var diagonal = Math.Sqrt(Math.Pow(obj.Vertices.Max(v => v.X) - obj.Vertices.Min(v => v.X), 2) + Math.Pow(obj.Vertices.Max(v => v.Y) - obj.Vertices.Min(v => v.Y), 2) + Math.Pow(obj.Vertices.Max(v => v.Z) - obj.Vertices.Min(v => v.Z), 2));
+                selected = await Task.Run(() => SelectNearbyTriangles(obj, sourceTriangle, hit.PointHit, Math.Max(.0001, diagonal * brushScale)));
+            }
             if (!_paintSelection.TryGetValue(objectIndex, out var current)) _paintSelection[objectIndex] = current = [];
             foreach (var triangle in selected) current.Add(triangle);
             UpdatePaintSelectionText(); Render(); StatusText.Text = $"Zone ajoutée · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
@@ -385,7 +482,28 @@ public partial class MainWindow : Window
         var normal = Vector3D.CrossProduct(new Vector3D(b.X - a.X, b.Y - a.Y, b.Z - a.Z), new Vector3D(c.X - a.X, c.Y - a.Y, c.Z - a.Z));
         if (normal.LengthSquared > 0) normal.Normalize(); return normal;
     }
-    static bool SameTriangle(Triangle triangle, int a, int b, int c) => (triangle.A == a || triangle.A == b || triangle.A == c) && (triangle.B == a || triangle.B == b || triangle.B == c) && (triangle.C == a || triangle.C == b || triangle.C == c);
+    int FindSourceTriangle(ModelObject obj, RayMeshGeometry3DHitTestResult hit)
+    {
+        if (!_triangleLookup.TryGetValue(obj.Index, out var lookup))
+        {
+            lookup = new Dictionary<(int, int, int), int>(obj.Triangles.Count);
+            for (var i = 0; i < obj.Triangles.Count; i++)
+            {
+                var triangle = obj.Triangles[i];
+                lookup[TriangleKey(triangle.A, triangle.B, triangle.C)] = i;
+            }
+            _triangleLookup[obj.Index] = lookup;
+        }
+        return lookup.GetValueOrDefault(TriangleKey(hit.VertexIndex1, hit.VertexIndex2, hit.VertexIndex3), -1);
+    }
+
+    static (int A, int B, int C) TriangleKey(int a, int b, int c)
+    {
+        if (a > b) (a, b) = (b, a);
+        if (b > c) (b, c) = (c, b);
+        if (a > b) (a, b) = (b, a);
+        return (a, b, c);
+    }
 
     void ApplyPaintSelection_Click(object sender, RoutedEventArgs e)
     {
@@ -508,7 +626,7 @@ public partial class MainWindow : Window
     void New_Click(object sender, RoutedEventArgs e)
     {
         if (!ConfirmDiscard()) return;
-        _doc = null; _lastSlicerFile = null; _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
+        _doc = null; _lastSlicerFile = null; _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
     }
 
     bool ConfirmDiscard() => !_dirty || MessageBox.Show("Les modifications non enregistrées seront perdues. Continuer ?", "PolyChrom 3MF", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
@@ -533,7 +651,8 @@ public partial class MainWindow : Window
         if (_doc is null) return;
         var vertices = _doc.Objects.SelectMany(o => o.Vertices).ToArray();
         var minX = vertices.Min(v => v.X); var maxX = vertices.Max(v => v.X); var minY = vertices.Min(v => v.Y); var maxY = vertices.Max(v => v.Y); var minZ = vertices.Min(v => v.Z); var maxZ = vertices.Max(v => v.Z);
-        _center = new Point3D((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        _modelCenter = new Point3D((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        _center = _modelCenter;
         _radius = Math.Max(1, Math.Sqrt(_doc.SizeX * _doc.SizeX + _doc.SizeY * _doc.SizeY + _doc.SizeZ * _doc.SizeZ) / 2);
     }
 
@@ -587,23 +706,224 @@ public partial class MainWindow : Window
     void AddPlate()
     {
         var size = Math.Max(_radius * 2.4, 80); var z = _doc!.Objects.SelectMany(o => o.Vertices).Min(v => v.Z) - .4;
-        var mesh = new MeshGeometry3D { Positions = new Point3DCollection([new(_center.X-size/2,_center.Y-size/2,z),new(_center.X+size/2,_center.Y-size/2,z),new(_center.X+size/2,_center.Y+size/2,z),new(_center.X-size/2,_center.Y+size/2,z)]), TriangleIndices = new Int32Collection([0,1,2,0,2,3]) };
+        var mesh = new MeshGeometry3D { Positions = new Point3DCollection([new(_modelCenter.X-size/2,_modelCenter.Y-size/2,z),new(_modelCenter.X+size/2,_modelCenter.Y-size/2,z),new(_modelCenter.X+size/2,_modelCenter.Y+size/2,z),new(_modelCenter.X-size/2,_modelCenter.Y+size/2,z)]), TriangleIndices = new Int32Collection([0,1,2,0,2,3]) };
         Viewer.Children.Add(new ModelVisual3D { Content = new GeometryModel3D(mesh, new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(80, 100, 110, 125)))) });
     }
 
     void UpdateCamera()
     {
-        var yaw = _yaw * Math.PI / 180; var pitch = Math.Clamp(_pitch, -89, 89) * Math.PI / 180; var distance = _radius * 3.0 * _zoom;
-        var direction = new Vector3D(Math.Cos(pitch) * Math.Sin(yaw), Math.Cos(pitch) * Math.Cos(yaw), Math.Sin(pitch));
+        (_yaw, _pitch) = (WrapAngle(_yaw), WrapAngle(_pitch));
+        var (direction, up) = OrbitFrame(_yaw, _pitch);
+        var distance = _radius * 3.0 * _zoom;
         var position = _center + direction * distance; var look = _center - position;
-        Viewer.Camera = _perspective ? new PerspectiveCamera(position, look, new Vector3D(0, 0, 1), 42) : new OrthographicCamera(position, look, new Vector3D(0, 0, 1), _radius * 2.4 * _zoom);
+        Viewer.Camera = _perspective ? new PerspectiveCamera(position, look, up, 42) : new OrthographicCamera(position, look, up, _radius * 2.4 * _zoom);
     }
 
-    void FitCamera() { _zoom = 1; _yaw = -40; _pitch = 25; UpdateCamera(); }
-    void Viewer_MouseWheel(object sender, MouseWheelEventArgs e) { _zoom = Math.Clamp(_zoom * (e.Delta > 0 ? .88 : 1.14), .08, 20); UpdateCamera(); }
-    async void Viewer_MouseDown(object sender, MouseButtonEventArgs e) { _last = e.GetPosition(Viewer); if (PaintMode.IsChecked == true && e.ChangedButton == MouseButton.Left) { await SelectPaintFromView(_last); return; } Viewer.CaptureMouse(); if (e.ClickCount == 1) SelectFromView(_last); }
-    void Viewer_MouseMove(object sender, System.Windows.Input.MouseEventArgs e) { if (PaintMode.IsChecked == true) return; var p = e.GetPosition(Viewer); if (e.LeftButton == MouseButtonState.Pressed) { _yaw += (p.X - _last.X) * .45; _pitch += (p.Y - _last.Y) * .45; } else if (e.RightButton == MouseButtonState.Pressed) { var scale = _radius * _zoom / Math.Max(200, Viewer.ActualWidth); _center.X -= (p.X - _last.X) * scale; _center.Z += (p.Y - _last.Y) * scale; } else return; _last = p; UpdateCamera(); }
-    void Viewer_MouseUp(object sender, MouseButtonEventArgs e) => Viewer.ReleaseMouseCapture();
+    internal static (Vector3D Direction, Vector3D Up) OrbitFrame(double yawDegrees, double pitchDegrees)
+    {
+        var yaw = yawDegrees * Math.PI / 180;
+        var pitch = pitchDegrees * Math.PI / 180;
+        var direction = new Vector3D(Math.Cos(pitch) * Math.Sin(yaw), Math.Cos(pitch) * Math.Cos(yaw), Math.Sin(pitch));
+        var up = new Vector3D(-Math.Sin(pitch) * Math.Sin(yaw), -Math.Sin(pitch) * Math.Cos(yaw), Math.Cos(pitch));
+        direction.Normalize();
+        up.Normalize();
+        return (direction, up);
+    }
+
+    static double WrapAngle(double angle)
+    {
+        angle %= 360;
+        return angle > 180 ? angle - 360 : angle <= -180 ? angle + 360 : angle;
+    }
+
+    void FitCamera() { _center = _modelCenter; _zoom = 1; _yaw = -40; _pitch = 25; UpdateCamera(); }
+    void Viewer_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var cursor = e.GetPosition(Viewer);
+        var anchor = CursorPointOnPlane(Viewer.Camera, cursor, Viewer.ActualWidth, Viewer.ActualHeight, _center);
+        var nextZoom = Math.Clamp(_zoom * (e.Delta > 0 ? .88 : 1.14), .08, 20);
+        if (Math.Abs(nextZoom - _zoom) < double.Epsilon) return;
+        _zoom = nextZoom;
+        UpdateCamera();
+        var movedAnchor = CursorPointOnPlane(Viewer.Camera, cursor, Viewer.ActualWidth, Viewer.ActualHeight, _center);
+        if (anchor is Point3D before && movedAnchor is Point3D after)
+        {
+            _center += before - after;
+            UpdateCamera();
+        }
+        e.Handled = true;
+    }
+
+    async void Viewer_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _last = e.GetPosition(Viewer);
+        if (PaintMode.IsChecked == true && e.ChangedButton == MouseButton.Left)
+        {
+            if (PaintTool.SelectedIndex == 1)
+            {
+                Viewer.CaptureMouse();
+                _paintStroke = true;
+                _paintStrokePoints.Clear();
+                _paintStrokePoints.Add(_last);
+                PaintStrokePreview.Points = new PointCollection([_last]);
+                PaintStrokePreview.StrokeThickness = BrushRadiusPixels() * 2;
+                PaintStrokePreview.Visibility = Visibility.Visible;
+            }
+            else await SelectPaintFromView(_last);
+            e.Handled = true;
+            return;
+        }
+        Viewer.CaptureMouse();
+        if (PaintMode.IsChecked != true && e.ChangedButton == MouseButton.Left && e.ClickCount == 1) SelectFromView(_last);
+        e.Handled = true;
+    }
+
+    void Viewer_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        var p = e.GetPosition(Viewer);
+        UpdateBrushCursor(p);
+        var paintMode = PaintMode.IsChecked == true;
+        if (paintMode && _paintStroke && e.LeftButton == MouseButtonState.Pressed)
+        {
+            var dx = p.X - _last.X;
+            var dy = p.Y - _last.Y;
+            if (dx * dx + dy * dy >= 2.25)
+            {
+                _paintStrokePoints.Add(p);
+                PaintStrokePreview.Points.Add(p);
+                _last = p;
+            }
+            return;
+        }
+        var rotate = paintMode ? e.RightButton == MouseButtonState.Pressed : e.LeftButton == MouseButtonState.Pressed;
+        if (rotate)
+        {
+            _yaw += (p.X - _last.X) * .45;
+            _pitch += (p.Y - _last.Y) * .45;
+        }
+        else if (!paintMode && e.RightButton == MouseButtonState.Pressed)
+        {
+            var scale = _radius * _zoom / Math.Max(200, Viewer.ActualWidth);
+            _center.X -= (p.X - _last.X) * scale;
+            _center.Z += (p.Y - _last.Y) * scale;
+        }
+        else return;
+        _last = p;
+        UpdateCamera();
+    }
+    async void Viewer_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Left && _paintStroke)
+        {
+            _paintStroke = false;
+            Viewer.ReleaseMouseCapture();
+            var points = _paintStrokePoints.ToArray();
+            _paintStrokePoints.Clear();
+            if (points.Length > 0 && _doc is not null && CapturePaintProjection() is { } projection)
+            {
+                // Capture every UI-owned value before leaving the dispatcher thread.
+                var document = _doc;
+                var brushRadius = BrushRadiusPixels();
+                SetBusy(true, "Application du trait de pinceau…");
+                try
+                {
+                    var selection = await Task.Run(() => SelectTrianglesFromScreenStroke(document, points, brushRadius, projection));
+                    foreach (var pair in selection)
+                    {
+                        if (!_paintSelection.TryGetValue(pair.Key, out var current)) _paintSelection[pair.Key] = current = [];
+                        current.UnionWith(pair.Value);
+                    }
+                    UpdatePaintSelectionText();
+                    Render();
+                    StatusText.Text = selection.Count == 0
+                        ? "Le trait n’a rencontré aucune surface visible."
+                        : $"Trait terminé · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Le trait n’a pas pu être appliqué.\n\n{ex.Message}", "Pinceau", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                finally
+                {
+                    PaintStrokePreview.Visibility = Visibility.Collapsed;
+                    PaintStrokePreview.Points.Clear();
+                    SetBusy(false);
+                    UpdateBrushCursor(e.GetPosition(Viewer));
+                }
+            }
+            else PaintStrokePreview.Visibility = Visibility.Collapsed;
+            return;
+        }
+        Viewer.ReleaseMouseCapture();
+    }
+
+    void Viewer_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_paintStroke && PaintBrushCursor is not null) PaintBrushCursor.Visibility = Visibility.Collapsed;
+    }
+
+    void UpdateBrushCursor(System.Windows.Point point)
+    {
+        if (PaintBrushCursor is null || PaintMode.IsChecked != true || PaintTool.SelectedIndex != 1)
+        {
+            if (PaintBrushCursor is not null) PaintBrushCursor.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var radius = BrushRadiusPixels();
+        PaintBrushCursor.Width = PaintBrushCursor.Height = radius * 2;
+        Canvas.SetLeft(PaintBrushCursor, point.X - radius);
+        Canvas.SetTop(PaintBrushCursor, point.Y - radius);
+        PaintBrushCursor.Visibility = Visibility.Visible;
+    }
+
+    internal static Point3D? CursorPointOnPlane(Camera? camera, System.Windows.Point cursor, double viewportWidth, double viewportHeight, Point3D planePoint)
+    {
+        if (camera is null || viewportWidth <= 0 || viewportHeight <= 0 || !double.IsFinite(cursor.X) || !double.IsFinite(cursor.Y)) return null;
+        Point3D origin;
+        Vector3D ray;
+        Vector3D forward;
+        Vector3D up;
+        if (camera is PerspectiveCamera perspective)
+        {
+            origin = perspective.Position; forward = perspective.LookDirection; up = perspective.UpDirection;
+            if (!NormalizeBasis(ref forward, ref up, out var right)) return null;
+            var halfHeight = Math.Tan(perspective.FieldOfView * Math.PI / 360);
+            var x = (cursor.X * 2 / viewportWidth - 1) * viewportWidth / viewportHeight * halfHeight;
+            var y = (1 - cursor.Y * 2 / viewportHeight) * halfHeight;
+            ray = forward + right * x + up * y;
+        }
+        else if (camera is OrthographicCamera orthographic)
+        {
+            origin = orthographic.Position; forward = orthographic.LookDirection; up = orthographic.UpDirection;
+            if (!NormalizeBasis(ref forward, ref up, out var right)) return null;
+            var x = (cursor.X * 2 / viewportWidth - 1) * orthographic.Width / 2;
+            var y = (1 - cursor.Y * 2 / viewportHeight) * (orthographic.Width * viewportHeight / viewportWidth) / 2;
+            origin += right * x + up * y;
+            ray = forward;
+        }
+        else return null;
+        var denominator = Vector3D.DotProduct(ray, forward);
+        if (Math.Abs(denominator) < 1e-9) return null;
+        var distance = Vector3D.DotProduct(planePoint - origin, forward) / denominator;
+        return distance > 0 && double.IsFinite(distance) ? origin + ray * distance : null;
+    }
+
+    static bool NormalizeBasis(ref Vector3D forward, ref Vector3D up, out Vector3D right)
+    {
+        right = default;
+        if (forward.LengthSquared < 1e-12 || up.LengthSquared < 1e-12) return false;
+        forward.Normalize();
+        up -= forward * Vector3D.DotProduct(up, forward);
+        if (up.LengthSquared < 1e-12) return false;
+        up.Normalize();
+        right = Vector3D.CrossProduct(forward, up);
+        if (right.LengthSquared < 1e-12) return false;
+        right.Normalize();
+        up = Vector3D.CrossProduct(right, forward);
+        up.Normalize();
+        return true;
+    }
+
     void SelectFromView(System.Windows.Point point) { VisualTreeHelper.HitTest(Viewer, null, result => { if (result is RayMeshGeometry3DHitTestResult hit && hit.ModelHit is GeometryModel3D model && _modelObjects.TryGetValue(model, out var index)) { ObjectsList.SelectedIndex = index; ObjectsList.ScrollIntoView(ObjectsList.SelectedItem); return HitTestResultBehavior.Stop; } return HitTestResultBehavior.Continue; }, new PointHitTestParameters(point)); }
     async Task SelectPaintFromView(System.Windows.Point point)
     {
@@ -611,6 +931,147 @@ public partial class MainWindow : Window
         VisualTreeHelper.HitTest(Viewer, null, result => { if (result is RayMeshGeometry3DHitTestResult hit && hit.ModelHit is GeometryModel3D model && _modelObjects.ContainsKey(model)) { selectedHit = hit; selectedModel = model; return HitTestResultBehavior.Stop; } return HitTestResultBehavior.Continue; }, new PointHitTestParameters(point));
         if (selectedHit is not null && selectedModel is not null) await SelectPaintZone(selectedHit, selectedModel);
     }
+
+    double BrushRadiusPixels() => PaintBrushSize.SelectedIndex switch { 0 => 4d, 1 => 8d, 2 => 14d, 3 => 22d, _ => 32d };
+
+    internal static IReadOnlyList<System.Windows.Point> BrushStrokeCenters(System.Windows.Point from, System.Windows.Point to, double spacing)
+    {
+        spacing = Math.Max(1, spacing);
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        var distance = Math.Sqrt(dx * dx + dy * dy);
+        var steps = Math.Max(1, (int)Math.Ceiling(distance / spacing));
+        return Enumerable.Range(0, steps + 1).Select(step => new System.Windows.Point(from.X + dx * step / steps, from.Y + dy * step / steps)).ToArray();
+    }
+
+    PaintProjection? CapturePaintProjection()
+    {
+        if (Viewer.Camera is not ProjectionCamera camera || Viewer.ActualWidth <= 0 || Viewer.ActualHeight <= 0) return null;
+        var forward = camera.LookDirection;
+        var up = camera.UpDirection;
+        if (!NormalizeBasis(ref forward, ref up, out var right)) return null;
+        return camera switch
+        {
+            PerspectiveCamera perspective => new PaintProjection(camera.Position, forward, up, right, true, perspective.FieldOfView, Viewer.ActualWidth, Viewer.ActualHeight),
+            OrthographicCamera orthographic => new PaintProjection(camera.Position, forward, up, right, false, orthographic.Width, Viewer.ActualWidth, Viewer.ActualHeight),
+            _ => null
+        };
+    }
+
+    internal static Dictionary<int, HashSet<int>> SelectTrianglesFromScreenStroke(
+        ModelDocument document,
+        IReadOnlyList<System.Windows.Point> stroke,
+        double radius,
+        PaintProjection projection)
+    {
+        var result = new Dictionary<int, HashSet<int>>();
+        if (stroke.Count == 0 || radius <= 0 || projection.Width <= 0 || projection.Height <= 0) return result;
+
+        const int cellSize = 3;
+        var gridWidth = Math.Max(1, (int)Math.Ceiling(projection.Width / cellSize));
+        var gridHeight = Math.Max(1, (int)Math.Ceiling(projection.Height / cellSize));
+        var mask = new bool[gridWidth * gridHeight];
+        var radiusCells = Math.Max(1, (int)Math.Ceiling(radius / cellSize));
+        var centers = new List<System.Windows.Point>();
+        if (stroke.Count == 1) centers.Add(stroke[0]);
+        else
+            for (var index = 1; index < stroke.Count; index++)
+                centers.AddRange(BrushStrokeCenters(stroke[index - 1], stroke[index], Math.Max(1.5, radius * .25)));
+
+        foreach (var center in centers)
+        {
+            var centerX = (int)Math.Floor(center.X / cellSize);
+            var centerY = (int)Math.Floor(center.Y / cellSize);
+            for (var y = Math.Max(0, centerY - radiusCells); y <= Math.Min(gridHeight - 1, centerY + radiusCells); y++)
+                for (var x = Math.Max(0, centerX - radiusCells); x <= Math.Min(gridWidth - 1, centerX + radiusCells); x++)
+                {
+                    var dx = (x + .5) * cellSize - center.X;
+                    var dy = (y + .5) * cellSize - center.Y;
+                    if (dx * dx + dy * dy <= radius * radius) mask[y * gridWidth + x] = true;
+                }
+        }
+
+        var nearestDepth = Enumerable.Repeat(double.PositiveInfinity, mask.Length).ToArray();
+        var candidates = new List<PaintCandidate>();
+        foreach (var obj in document.Objects)
+        {
+            for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
+            {
+                var triangle = obj.Triangles[triangleIndex];
+                var a = obj.Vertices[triangle.A];
+                var b = obj.Vertices[triangle.B];
+                var c = obj.Vertices[triangle.C];
+                var center = new Point3D((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
+                if (!TryProjectPoint(center, projection, out var screen, out var depth)) continue;
+                var x = (int)(screen.X / cellSize);
+                var y = (int)(screen.Y / cellSize);
+                if ((uint)x >= (uint)gridWidth || (uint)y >= (uint)gridHeight) continue;
+                var cell = y * gridWidth + x;
+                if (!mask[cell]) continue;
+                candidates.Add(new PaintCandidate(obj.Index, triangleIndex, cell, depth));
+                if (depth < nearestDepth[cell]) nearestDepth[cell] = depth;
+            }
+        }
+
+        foreach (var candidate in candidates)
+        {
+            // Garde uniquement la peau visible de la figurine et évite de peindre sa face arrière.
+            var candidateX = candidate.Cell % gridWidth;
+            var candidateY = candidate.Cell / gridWidth;
+            var visibleDepth = nearestDepth[candidate.Cell];
+            for (var y = Math.Max(0, candidateY - 1); y <= Math.Min(gridHeight - 1, candidateY + 1); y++)
+                for (var x = Math.Max(0, candidateX - 1); x <= Math.Min(gridWidth - 1, candidateX + 1); x++)
+                    visibleDepth = Math.Min(visibleDepth, nearestDepth[y * gridWidth + x]);
+            var tolerance = Math.Max(0.001, visibleDepth * .006);
+            if (candidate.Depth > visibleDepth + tolerance) continue;
+            if (!result.TryGetValue(candidate.ObjectIndex, out var triangles)) result[candidate.ObjectIndex] = triangles = [];
+            triangles.Add(candidate.TriangleIndex);
+        }
+        return result;
+    }
+
+    internal static bool TryProjectPoint(Point3D point, PaintProjection projection, out System.Windows.Point screen, out double depth)
+    {
+        screen = default;
+        var relative = point - projection.Position;
+        depth = Vector3D.DotProduct(relative, projection.Forward);
+        if (depth <= 1e-9 || !double.IsFinite(depth)) return false;
+        var horizontal = Vector3D.DotProduct(relative, projection.Right);
+        var vertical = Vector3D.DotProduct(relative, projection.Up);
+        double normalizedX;
+        double normalizedY;
+        if (projection.Perspective)
+        {
+            var halfWidth = Math.Tan(projection.FieldOfViewOrWidth * Math.PI / 360);
+            var halfHeight = halfWidth * projection.Height / projection.Width;
+            if (halfWidth <= 0 || halfHeight <= 0) return false;
+            normalizedX = horizontal / (depth * halfWidth);
+            normalizedY = vertical / (depth * halfHeight);
+        }
+        else
+        {
+            var halfWidth = projection.FieldOfViewOrWidth / 2;
+            var halfHeight = halfWidth * projection.Height / projection.Width;
+            if (halfWidth <= 0 || halfHeight <= 0) return false;
+            normalizedX = horizontal / halfWidth;
+            normalizedY = vertical / halfHeight;
+        }
+        if (!double.IsFinite(normalizedX) || !double.IsFinite(normalizedY)) return false;
+        screen = new System.Windows.Point((normalizedX + 1) * projection.Width / 2, (1 - normalizedY) * projection.Height / 2);
+        return screen.X >= 0 && screen.Y >= 0 && screen.X < projection.Width && screen.Y < projection.Height;
+    }
+
+    internal readonly record struct PaintProjection(
+        Point3D Position,
+        Vector3D Forward,
+        Vector3D Up,
+        Vector3D Right,
+        bool Perspective,
+        double FieldOfViewOrWidth,
+        double Width,
+        double Height);
+
+    readonly record struct PaintCandidate(int ObjectIndex, int TriangleIndex, int Cell, double Depth);
 
     void ViewIso_Click(object sender, RoutedEventArgs e) { _yaw = -40; _pitch = 25; UpdateCamera(); }
     void ViewFront_Click(object sender, RoutedEventArgs e) { _yaw = 180; _pitch = 0; UpdateCamera(); }
@@ -658,6 +1119,28 @@ public partial class MainWindow : Window
     }
     void ShowWelcome() { var dialog = new WelcomeWindow { Owner = this }; dialog.ShowDialog(); _settings.ShowWelcome = dialog.ShowAtStartup; _settingsService.Save(_settings); }
     void Welcome_Click(object sender, RoutedEventArgs e) => ShowWelcome();
+    void HelpGuide_Click(object sender, RoutedEventArgs e) => new HelpGuideWindow { Owner = this }.ShowDialog();
+    void WhatsNew_Click(object sender, RoutedEventArgs e) => ShowWhatsNew(
+        UpdateService.CurrentVersion().ToString(3),
+        string.IsNullOrWhiteSpace(_settings.LastReleaseNotes) ? UpdateService.BundledReleaseNotes : _settings.LastReleaseNotes);
+
+    void ShowWhatsNewAfterUpdate()
+    {
+        if (!_settingsExistedAtStartup) return;
+        var current = UpdateService.CurrentVersion().ToString(3);
+        if (string.Equals(_settings.LastSeenVersion, current, StringComparison.OrdinalIgnoreCase)) return;
+        var notes = string.Equals(_settings.PendingUpdateVersion, current, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(_settings.PendingUpdateNotes)
+            ? _settings.PendingUpdateNotes
+            : UpdateService.BundledReleaseNotes;
+        ShowWhatsNew(current, notes);
+        _settings.LastSeenVersion = current;
+        _settings.LastReleaseNotes = notes;
+        _settings.PendingUpdateVersion = "";
+        _settings.PendingUpdateNotes = "";
+        _settingsService.Save(_settings);
+    }
+
+    void ShowWhatsNew(string version, string notes) => new WhatsNewWindow(version, notes) { Owner = this }.ShowDialog();
     void Donate_Click(object sender, RoutedEventArgs e)
     {
         try { DonationService.Open(); }
@@ -667,7 +1150,7 @@ public partial class MainWindow : Window
 
     async Task CheckForUpdatesAsync(bool automatic)
     {
-        if (!automatic) { IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = true; StatusText.Text = "Recherche d’une mise à jour…"; }
+        if (!automatic) { IsEnabled = false; StatusText.Text = "Recherche d’une mise à jour…"; SetActivity(true, "Recherche d’une mise à jour…"); }
         try
         {
             var update = await _updateService.GetAvailableUpdateAsync();
@@ -681,15 +1164,19 @@ public partial class MainWindow : Window
             if (install != MessageBoxResult.Yes) { StatusText.Text = $"Mise à jour {update.Tag} reportée."; return; }
             if (_dirty && MessageBox.Show("Le logiciel devra redémarrer. Les modifications non enregistrées seront perdues. Continuer ?", "Enregistrer avant la mise à jour", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
-            IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = false; Progress.Minimum = 0; Progress.Maximum = 100; Progress.Value = 0;
-            var progress = new Progress<double>(value => { Progress.Value = value; StatusText.Text = $"Téléchargement de la mise à jour… {value:0}%"; });
+            IsEnabled = false; SetActivity(true, "Téléchargement de la mise à jour… 0 %", true, 0);
+            var progress = new Progress<double>(value => { StatusText.Text = $"Téléchargement de la mise à jour… {value:0}%"; SetActivity(true, $"Téléchargement de la mise à jour… {value:0} %", true, value); });
             var installer = await _updateService.DownloadInstallerAsync(update, progress);
+            _settings.PendingUpdateVersion = update.Version.ToString(3);
+            _settings.PendingUpdateNotes = update.ReleaseNotes;
+            _settingsService.Save(_settings);
             MessageBox.Show("La mise à jour a été téléchargée et vérifiée.\n\nPolyChrom 3MF va maintenant se fermer, installer la nouvelle version en silence, puis redémarrer automatiquement.", "Redémarrage après mise à jour", MessageBoxButton.OK, MessageBoxImage.Information);
             _ = Process.Start(new ProcessStartInfo(installer)
             {
                 UseShellExecute = true,
                 ArgumentList = { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS" }
             }) ?? throw new InvalidOperationException("Impossible de démarrer l’installateur de mise à jour.");
+            _shutdownForUpdate = true;
             System.Windows.Application.Current.Shutdown();
         }
         catch (Exception ex)
@@ -697,11 +1184,11 @@ public partial class MainWindow : Window
             StatusText.Text = "Recherche de mise à jour impossible.";
             if (!automatic) MessageBox.Show($"Impossible de mettre à jour le logiciel pour le moment.\n\n{ex.Message}", "Mise à jour", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        finally { IsEnabled = true; Progress.Visibility = Visibility.Collapsed; Progress.IsIndeterminate = true; }
+        finally { IsEnabled = true; SetActivity(false); }
     }
     void About_Click(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return; if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e); }
-    void Window_Closing(object? sender, CancelEventArgs e) { if (!ConfirmDiscard()) e.Cancel = true; }
+    void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 
     sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern);

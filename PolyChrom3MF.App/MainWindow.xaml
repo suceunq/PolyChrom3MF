@@ -15,19 +15,18 @@
         <Separator/><MenuItem Header="_Quitter" Click="Quit_Click"/>
       </MenuItem>
       <MenuItem Header="_Édition"><MenuItem Header="_Annuler" Click="Undo_Click" InputGestureText="Ctrl+Z"/><MenuItem Header="_Rétablir" Click="Redo_Click" InputGestureText="Ctrl+Y"/><Separator/><MenuItem Header="_Paramètres…" Click="Settings_Click"/></MenuItem>
-      <MenuItem Header="_Motif"><MenuItem Header="_Importer un PNG…" Click="ImportPattern_Click"/><MenuItem Header="_Retirer le motif" Click="RemovePattern_Click"/></MenuItem>
+      <MenuItem Header="_Motif"><MenuItem Header="_Importer une image PNG/JPG…" Click="ImportPattern_Click"/><MenuItem Header="_Retirer le motif" Click="RemovePattern_Click"/></MenuItem>
       <MenuItem Header="_Coloration"><MenuItem x:Name="PaintModeMenu" Header="_Sélectionner des zones" IsCheckable="True" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed"/><MenuItem Header="Appliquer la couleur aux zones" Click="ApplyPaintSelection_Click"/><MenuItem Header="Effacer la sélection" Click="ClearPaintSelection_Click"/></MenuItem>
       <MenuItem Header="_Affichage"><MenuItem Header="Isométrique" Click="ViewIso_Click"/><MenuItem Header="Face" Click="ViewFront_Click"/><MenuItem Header="Arrière" Click="ViewBack_Click"/><MenuItem Header="Gauche" Click="ViewLeft_Click"/><MenuItem Header="Droite" Click="ViewRight_Click"/><MenuItem Header="Dessus" Click="ViewTop_Click"/><MenuItem Header="Dessous" Click="ViewBottom_Click"/><Separator/><MenuItem Header="Afficher/masquer le plateau" Click="ToggleGrid_Click"/><MenuItem Header="Perspective/orthographique" Click="TogglePerspective_Click"/></MenuItem>
-      <MenuItem Header="_Aide"><MenuItem Header="Assistant de bienvenue" Click="Welcome_Click"/><MenuItem Header="Soutenir le projet via PayPal" Click="Donate_Click"/><MenuItem Header="Rechercher une mise à jour" Click="Update_Click"/><Separator/><MenuItem Header="À propos" Click="About_Click"/></MenuItem>
+      <MenuItem Header="_Aide"><MenuItem Header="Guide des fonctions" Click="HelpGuide_Click"/><MenuItem Header="Assistant de bienvenue" Click="Welcome_Click"/><MenuItem Header="Nouveautés de cette version" Click="WhatsNew_Click"/><MenuItem Header="Soutenir le projet via PayPal" Click="Donate_Click"/><MenuItem Header="Rechercher une mise à jour" Click="Update_Click"/><Separator/><MenuItem Header="À propos" Click="About_Click"/></MenuItem>
     </Menu>
 
     <ToolBar DockPanel.Dock="Top" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
       <Button Click="Import_Click" ToolTip="Ouvrir un fichier 3MF ou STL">Importer 3MF/STL</Button><Button Click="SaveProject_Click">Enregistrer projet</Button><Button Click="Export_Click">Exporter 3MF</Button><Button x:Name="OpenSlicerButton" Click="OpenPreferredSlicer_Click" IsEnabled="False">Ouvrir dans mon slicer</Button>
-      <Separator/><Button Click="Undo_Click">Annuler</Button><Button Click="Redo_Click">Rétablir</Button><Separator/><Button Click="ImportPattern_Click" ToolTip="Projeter un motif PNG imprimable sur la figurine">Importer motif PNG</Button><Button Click="ColorCount_Click">Nombre de couleurs</Button><Button Click="Regenerate_Click">Régénérer</Button><Button Click="Settings_Click">Paramètres</Button>
+      <Separator/><Button Click="Undo_Click">Annuler</Button><Button Click="Redo_Click">Rétablir</Button><Separator/><Button Click="ImportPattern_Click" ToolTip="Projeter une image PNG ou JPG imprimable sur la figurine">Importer motif image</Button><Button Click="ColorCount_Click">Nombre de couleurs</Button><Button Click="Regenerate_Click">Régénérer</Button><Button Click="Settings_Click">Paramètres</Button>
     </ToolBar>
 
     <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
-      <ProgressBar x:Name="Progress" Width="120" Height="14" IsIndeterminate="False" Visibility="Collapsed"/>
       <TextBlock x:Name="StatusText" Text="Prêt — importez un fichier 3MF ou STL." Margin="8,0"/><Separator/><TextBlock x:Name="StatsText"/>
     </StatusBar>
 
@@ -54,10 +53,43 @@
 
       <Border Grid.Column="1" Background="{DynamicResource ViewerBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,10,0">
         <Grid>
-          <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" ToolTip="Bouton gauche : rotation · bouton droit : déplacement · molette : zoom"/>
+          <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" MouseLeave="Viewer_MouseLeave" ToolTip="Rotation orbitale 360° possible sur le modèle, le plateau ou le fond · Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
+          <Canvas IsHitTestVisible="False" Panel.ZIndex="15">
+            <Polyline x:Name="PaintStrokePreview" Visibility="Collapsed" Stroke="#99FFD32D" StrokeThickness="16"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+            <Ellipse x:Name="PaintBrushCursor" Visibility="Collapsed" Stroke="#FFFFD32D" StrokeThickness="2" Fill="#22FFD32D"/>
+          </Canvas>
           <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" MaxWidth="250">
             <Button Click="ViewIso_Click" Content="Iso" Margin="2"/><Button Click="ViewFront_Click" Content="Face" Margin="2"/><Button Click="ViewTop_Click" Content="Dessus" Margin="2"/><Button Click="ToggleGrid_Click" Content="Plateau" Margin="2"/><Button Click="Fit_Click" Content="Recentrer" Margin="2"/>
           </WrapPanel>
+          <Border x:Name="ActivityOverlay"
+                  Panel.ZIndex="20"
+                  Visibility="Collapsed"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Top"
+                  Width="520"
+                  MaxWidth="650"
+                  Margin="16,72,16,0"
+                  Padding="16,13"
+                  CornerRadius="10"
+                  Background="#F02B313C"
+                  BorderBrush="#58AFFF"
+                  BorderThickness="2">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="38"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Border Width="30" Height="30" CornerRadius="15" Background="#187FD1" VerticalAlignment="Top">
+                <TextBlock Text="●" Foreground="White" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                <TextBlock Text="TRAITEMENT EN COURS" Foreground="#8EC8FF" FontSize="11" FontWeight="Bold"/>
+                <TextBlock x:Name="ActivityText" Text="Traitement…" Foreground="White" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,3,0,9"/>
+                <ProgressBar x:Name="ActivityProgress" Height="7" Minimum="0" Maximum="100" IsIndeterminate="True"/>
+              </StackPanel>
+            </Grid>
+          </Border>
           <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="#A020242B" Padding="8" Margin="8"><TextBlock x:Name="DimensionsText"/></Border>
           <TextBlock x:Name="HintText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" Foreground="{DynamicResource MutedText}" Text="Importez ou déposez un fichier 3MF ou STL."/>
         </Grid>
@@ -76,7 +108,10 @@
             <StackPanel>
               <TextBlock Text="COLORATION MANUELLE" FontWeight="Bold"/>
               <CheckBox x:Name="PaintMode" Content="Sélectionner des zones sur le modèle" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed" Margin="0,7,0,5"/>
-              <ComboBox x:Name="PaintBrushSize" SelectedIndex="0" Margin="0,0,0,5"><ComboBoxItem Content="Une seule face (précis)"/><ComboBoxItem Content="Très petite zone"/><ComboBoxItem Content="Petite zone"/><ComboBoxItem Content="Zone moyenne"/><ComboBoxItem Content="Grande zone"/></ComboBox>
+              <TextBlock Text="Outil" FontSize="12" Margin="0,2,0,3"/>
+              <ComboBox x:Name="PaintTool" SelectedIndex="0" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Face par face (clic)"/><ComboBoxItem Content="Pinceau fluide (cliquer-glisser)"/></ComboBox>
+              <TextBlock Text="Taille du pinceau" FontSize="12" Margin="0,2,0,3"/>
+              <ComboBox x:Name="PaintBrushSize" SelectedIndex="1" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Très fin — 8 px"/><ComboBoxItem Content="Fin — 16 px"/><ComboBoxItem Content="Moyen — 28 px"/><ComboBoxItem Content="Large — 44 px"/><ComboBoxItem Content="Très large — 64 px"/></ComboBox>
               <TextBlock Text="Couleur à appliquer" FontSize="12" Margin="0,2,0,3"/><ComboBox x:Name="PaintColorCombo" DisplayMemberPath="Label" SelectedIndex="0" Margin="0,0,0,5"/>
               <TextBlock x:Name="PaintSelectionText" Text="0 triangle sélectionné" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,0,0,5"/>
               <WrapPanel><Button Click="ApplyPaintSelection_Click" Content="Appliquer la couleur"/><Button Click="ClearPaintSelection_Click" Content="Effacer"/></WrapPanel>
@@ -84,7 +119,7 @@
           </Border>
           <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10">
             <StackPanel>
-              <TextBlock Text="MOTIF PNG" FontWeight="Bold"/>
+              <TextBlock Text="MOTIF IMAGE · PNG/JPG" FontWeight="Bold"/>
               <TextBlock x:Name="PatternText" Text="Aucun motif importé" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,4,0,7"/>
               <WrapPanel><Button Click="ImportPattern_Click" Content="Importer…"/><Button Click="RemovePattern_Click" Content="Retirer"/></WrapPanel>
             </StackPanel>

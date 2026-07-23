@@ -1,0 +1,41 @@
+<Window x:Class="PolyChrom3MF.App.ImageImportOptionsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Préparer l’image"
+        Width="620"
+        Height="610"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#20242B"
+        Foreground="White">
+  <Grid Margin="24">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="250"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Text="PRÉPARER LE MOTIF" FontSize="22" FontWeight="Bold"/>
+    <Border Grid.Row="1" Margin="0,14,0,14" Background="#171B22" BorderBrush="#566277" BorderThickness="1" CornerRadius="8" Padding="8">
+      <Image x:Name="Preview" Stretch="Uniform"/>
+    </Border>
+    <CheckBox Grid.Row="2" x:Name="RemoveBackgroundCheck" Content="Supprimer automatiquement le fond" FontWeight="SemiBold" Checked="OptionChanged" Unchecked="OptionChanged"/>
+      <TextBlock Grid.Row="3" Margin="24,5,0,12" TextWrapping="Wrap" Foreground="#C2CAD6"
+               Text="Traitement local sans plafond arbitraire de taille : le logiciel retire le fond relié aux bords de l’image. Les sujets bien détachés sur un fond uni donnent les meilleurs résultats."/>
+    <StackPanel Grid.Row="4" x:Name="TolerancePanel">
+      <DockPanel>
+        <TextBlock Text="Tolérance de détection" FontWeight="SemiBold"/>
+        <TextBlock x:Name="ToleranceValue" DockPanel.Dock="Right" Text="42" HorizontalAlignment="Right"/>
+      </DockPanel>
+      <Slider x:Name="ToleranceSlider" Minimum="5" Maximum="120" Value="42" TickFrequency="5" ValueChanged="ToleranceChanged"/>
+      <TextBlock Text="Faible : conserve davantage le sujet · Forte : retire davantage de nuances du fond" Foreground="#98A5B8" FontSize="12" TextWrapping="Wrap"/>
+    </StackPanel>
+    <Grid Grid.Row="5" Margin="0,18,0,0">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+      <Button Grid.Column="0" Content="Continuer" Click="Continue_Click" IsDefault="True" MinHeight="42" FontWeight="Bold" Background="#187FD1" BorderBrush="#58AFFF"/>
+      <Button Grid.Column="2" Content="Annuler" IsCancel="True" MinHeight="42"/>
+    </Grid>
+  </Grid>
+</Window>

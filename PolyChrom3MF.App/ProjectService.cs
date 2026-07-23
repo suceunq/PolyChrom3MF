@@ -11,9 +11,6 @@ public sealed record ProjectData(string SourcePath, int SelectedProposal, List<L
 
 public sealed class ProjectService
 {
-    const long MaxProjectSize = 1024L * 1024 * 1024;
-    const long MaxSettingsSize = 128L * 1024 * 1024;
-
     public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null)
     {
         if (!File.Exists(document.Path)) throw new FileNotFoundException("Le modèle 3D source est introuvable.", document.Path);
@@ -27,7 +24,7 @@ public sealed class ProjectService
         {
             PatternService.ValidateSettings(pattern);
             var image = new FileInfo(pattern.ImagePath);
-            if (!image.Exists || image.Length is <= 0 or > 32L * 1024 * 1024 || !image.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Le PNG du motif est absent ou trop volumineux.");
+            if (!image.Exists || image.Length <= 0 || !image.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Le PNG du motif est absent ou invalide.");
             storedPattern = pattern with { ImagePath = "pattern/motif.png" };
         }
         var data = new ProjectData(modelEntryName, selected, proposals.Select(p => p.Colors.Select(c => c.Hex).ToList()).ToList(), proposals.Select(p => new Dictionary<int,int>(p.Assignments)).ToList(), yaw, pitch, zoom, generation, funMode, colorCount, triangleAssignments, storedPattern, proposals.Select(p => p.Name).ToList(), proposals.Select(p => p.Description).ToList());
@@ -67,7 +64,7 @@ public sealed class ProjectService
         try
         {
             var file = new FileInfo(path);
-            if (!file.Exists || file.Length == 0 || file.Length > MaxProjectSize) throw new InvalidDataException("Projet PolyChrom absent, vide ou trop volumineux.");
+            if (!file.Exists || file.Length == 0) throw new InvalidDataException("Projet PolyChrom absent ou vide.");
             using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             Span<byte> signature = stackalloc byte[2];
             if (input.Read(signature) != 2) throw new InvalidDataException("Projet PolyChrom incomplet.");
@@ -85,7 +82,7 @@ public sealed class ProjectService
     {
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
         var settings = archive.GetEntry("project.json") ?? throw new InvalidDataException("Les réglages du projet sont absents.");
-        if (settings.Length <= 0 || settings.Length > MaxSettingsSize) throw new InvalidDataException("Les réglages du projet sont invalides ou trop volumineux.");
+        if (settings.Length <= 0) throw new InvalidDataException("Les réglages du projet sont invalides.");
         ProjectData data;
         using (var stream = settings.Open()) data = JsonSerializer.Deserialize<ProjectData>(stream) ?? throw new InvalidDataException("Projet PolyChrom invalide.");
         Validate(data);
@@ -94,7 +91,7 @@ public sealed class ProjectService
         var modelEntry = archive.GetEntry(data.SourcePath);
         var modelName = Path.GetFileName(data.SourcePath);
         var extension = Path.GetExtension(modelName).ToLowerInvariant();
-        if (modelEntry is null || modelEntry.Length <= 0 || modelEntry.Length > MaxProjectSize || data.SourcePath != "model/" + modelName || extension is not ".3mf" and not ".stl")
+        if (modelEntry is null || modelEntry.Length <= 0 || data.SourcePath != "model/" + modelName || extension is not ".3mf" and not ".stl")
             throw new InvalidDataException("Le modèle 3D intégré au projet est absent ou invalide.");
 
         var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(projectPath).ToUpperInvariant())))[..20];
@@ -107,7 +104,7 @@ public sealed class ProjectService
         {
             if (data.Pattern.ImagePath != "pattern/motif.png") throw new InvalidDataException("Le chemin du motif intégré est invalide.");
             var patternEntry = archive.GetEntry(data.Pattern.ImagePath);
-            if (patternEntry is null || patternEntry.Length is <= 0 or > 32L * 1024 * 1024) throw new InvalidDataException("Le motif PNG intégré est absent ou trop volumineux.");
+            if (patternEntry is null || patternEntry.Length <= 0) throw new InvalidDataException("Le motif PNG intégré est absent.");
             var patternPath = Path.Combine(folder, "motif.png");
             Extract(patternEntry, patternPath);
             extractedPattern = data.Pattern with { ImagePath = patternPath };
@@ -133,7 +130,6 @@ public sealed class ProjectService
 
     static ProjectData LoadLegacy(Stream input)
     {
-        if (input.Length > MaxSettingsSize) throw new InvalidDataException("Ancien projet PolyChrom trop volumineux.");
         var data = JsonSerializer.Deserialize<ProjectData>(input) ?? throw new InvalidDataException("Projet PolyChrom invalide.");
         Validate(data);
         return data;
