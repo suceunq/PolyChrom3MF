@@ -15,9 +15,10 @@ public sealed class StlService
         if (info.Length < 15) throw new InvalidDataException("Le fichier STL est vide ou incomplet.");
         var (vertices, triangles) = IsBinary(path) ? ReadBinary(path) : ReadAscii(path);
         if (triangles.Count == 0) throw new InvalidDataException("Aucun triangle exploitable n’a été trouvé dans ce STL.");
-        var model = BuildModel(vertices, triangles);
         var obj = new ModelObject(0, "1", vertices, triangles, "3D/3dmodel.model");
-        return new ModelDocument(path, model, "3D/3dmodel.model", [obj],
+        // Building millions of XML elements during import duplicates the whole
+        // STL in memory. The 3MF XML is generated only when the user exports.
+        return new ModelDocument(path, new XDocument(), "3D/3dmodel.model", [obj],
             vertices.Max(v => v.X) - vertices.Min(v => v.X), vertices.Max(v => v.Y) - vertices.Min(v => v.Y), vertices.Max(v => v.Z) - vertices.Min(v => v.Z),
             [], triangles.Count, "Le format STL ne contient ni unité ni matériaux : les dimensions sont interprétées en millimètres et le maillage forme un seul objet.", "millimeter", 0, 0, "STL");
     }
@@ -77,15 +78,4 @@ public sealed class StlService
         var index = vertices.Count; vertices.Add(new Vertex(x, y, z)); map[key] = index; return index;
     }
 
-    static XDocument BuildModel(List<Vertex> vertices, List<Triangle> triangles)
-    {
-        var ns = ThreeMfService.Core;
-        var mesh = new XElement(ns + "mesh",
-            new XElement(ns + "vertices", vertices.Select(v => new XElement(ns + "vertex", new XAttribute("x", v.X.ToString("R", CultureInfo.InvariantCulture)), new XAttribute("y", v.Y.ToString("R", CultureInfo.InvariantCulture)), new XAttribute("z", v.Z.ToString("R", CultureInfo.InvariantCulture))))),
-            new XElement(ns + "triangles", triangles.Select(t => new XElement(ns + "triangle", new XAttribute("v1", t.A), new XAttribute("v2", t.B), new XAttribute("v3", t.C)))));
-        return new XDocument(new XElement(ns + "model", new XAttribute("unit", "millimeter"), new XAttribute(XNamespace.Xml + "lang", "fr-FR"),
-            new XElement(ns + "metadata", new XAttribute("name", "Application"), "PolyChrom 3MF"),
-            new XElement(ns + "resources", new XElement(ns + "object", new XAttribute("id", "1"), new XAttribute("type", "model"), mesh)),
-            new XElement(ns + "build", new XElement(ns + "item", new XAttribute("objectid", "1")))));
-    }
 }

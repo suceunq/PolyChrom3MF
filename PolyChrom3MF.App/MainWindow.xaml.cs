@@ -18,6 +18,8 @@ namespace PolyChrom3MF.App;
 
 public partial class MainWindow : Window
 {
+    const long FullDetailTriangleLimit = 1_200_000;
+    const int LargeModelPreviewTarget = 700_000;
     readonly ThreeMfService _service = new();
     readonly StlService _stlService = new();
     readonly PaletteService _palettes = new();
@@ -27,6 +29,8 @@ public partial class MainWindow : Window
     readonly SlicerDetectionService _slicerDetection = new();
     readonly UpdateService _updateService = new();
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
+    readonly Dictionary<GeometryModel3D, Dictionary<(int A, int B, int C), int>> _renderTriangleLookup = [];
+    readonly Dictionary<int, double> _objectDiagonals = [];
     readonly Dictionary<int, HashSet<int>> _paintSelection = [];
     readonly Dictionary<int, Dictionary<(int A, int B, int C), int>> _triangleLookup = [];
     readonly List<System.Windows.Point> _paintStrokePoints = [];
@@ -35,6 +39,7 @@ public partial class MainWindow : Window
     AppSettings _settings;
     readonly bool _settingsExistedAtStartup;
     ModelDocument? _doc;
+    Dictionary<int, PreviewMesh> _previewMeshes = [];
     List<ColorProposal> _proposals = [];
     List<ColorProposal>? _beforePatternProposals;
     ColorProposal? _selected;
@@ -45,7 +50,7 @@ public partial class MainWindow : Window
     int _generation, _colorCount = 4;
     string? _lastSlicerFile;
     Point3D _center, _modelCenter;
-    double _radius = 100;
+    double _radius = 100, _modelMinZ;
 
     public MainWindow()
     {
@@ -93,10 +98,20 @@ public partial class MainWindow : Window
         try
         {
             _doc = await Task.Run(() => Path.GetExtension(path).Equals(".stl", StringComparison.OrdinalIgnoreCase) ? _stlService.Read(path) : _service.Read(path));
-            _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
+            if (_doc.TriangleCount > FullDetailTriangleLimit)
+            {
+                SetActivity(true, $"Optimisation de l’aperçu de {_doc.TriangleCount:N0} faces…");
+                _previewMeshes = await Task.Run(() => BuildPreviewMeshes(_doc));
+            }
+            else _previewMeshes.Clear();
+            _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
             _lastSlicerFile = path; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             FileText.Text = Path.GetFileName(path);
-            InfoText.Text = $"Format : {_doc.SourceFormat}\n{_doc.Objects.Count} objet(s) · {_doc.TriangleCount:N0} triangles\nUnité : {_doc.Unit}\nComposants : {_doc.ComponentCount}";
+            var displayedTriangles = _doc.Objects.Sum(obj => _previewMeshes.TryGetValue(obj.Index, out var preview) ? (long)preview.Triangles.Count : obj.Triangles.Count);
+            var previewNote = displayedTriangles < _doc.TriangleCount
+                ? $"\nAperçu optimisé : {displayedTriangles:N0} faces affichées · les {_doc.TriangleCount:N0} faces restent conservées pour l’export"
+                : "";
+            InfoText.Text = $"Format : {_doc.SourceFormat}\n{_doc.Objects.Count} objet(s) · {_doc.TriangleCount:N0} triangles\nUnité : {_doc.Unit}\nComposants : {_doc.ComponentCount}{previewNote}";
             DimensionsText.Text = $"{_doc.SizeX:0.##} × {_doc.SizeY:0.##} × {_doc.SizeZ:0.##} mm";
             ObjectsList.ItemsSource = _doc.Objects;
             ObjectsList.SelectedIndex = 0;
@@ -291,7 +306,9 @@ public partial class MainWindow : Window
         string preparedImage;
         var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected));
         var proposalsBeforePreview = _proposals;
-        var previewBase = (_beforePatternProposals ?? _proposals).Select(Clone).ToList();
+        // Preview changes only the active proposal. Share the three untouched
+        // proposals instead of cloning hundreds of megabytes of triangle arrays.
+        var previewBase = _beforePatternProposals ?? _proposals;
         CancellationTokenSource? previewCancellation = null;
         var previewRevision = 0;
         try
@@ -304,7 +321,7 @@ public partial class MainWindow : Window
             var tolerance = options.Tolerance;
             var sourceImage = file.FileName;
             preparedImage = await Task.Run(() => PatternService.PrepareImage(sourceImage, removeBackground, tolerance));
-            dialog = new PatternWindow(preparedImage, _doc.Objects, _pattern, Path.GetFileName(file.FileName)) { Owner = this };
+            dialog = new PatternWindow(preparedImage, _doc.Objects, _selected.Colors, _pattern, Path.GetFileName(file.FileName)) { Owner = this };
             dialog.PreviewRequested += PreviewPattern;
             var accepted = dialog.ShowDialog() == true;
             Interlocked.Increment(ref previewRevision);
@@ -376,24 +393,30 @@ public partial class MainWindow : Window
             try
             {
                 StatusText.Text = "Calcul de l’aperçu du motif…";
+                dialog.SetPreviewStatus("Calcul de l’aperçu en cours…");
                 var proposal = Clone(previewBase[selectedIndex]);
                 var previewMode = settings.FourVariants
                     ? new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar }[Math.Min(selectedIndex, 3)]
                     : settings.Mode;
                 var result = await Task.Run(() => _patternService.Apply(_doc, proposal, settings, previewMode, cancellation.Token), cancellation.Token);
                 if (cancellation.IsCancellationRequested || revision != previewRevision) return;
-                var preview = previewBase.Select(Clone).ToList();
+                var preview = previewBase.ToList();
                 preview[selectedIndex] = Rename(proposal, $"Aperçu — {PatternModeName(previewMode)}", $"Aperçu en direct · {PatternModeName(previewMode).ToLowerInvariant()}");
                 _proposals = preview;
                 SelectProposal(selectedIndex);
                 RefreshBindings();
                 Render();
                 StatusText.Text = $"Aperçu actualisé sur {result.ColoredTriangles:N0} triangles.";
+                dialog.SetPreviewStatus($"Aperçu actualisé · {result.ColoredTriangles:N0} triangles.");
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                if (revision == previewRevision) StatusText.Text = $"Aperçu impossible : {ex.Message}";
+                if (revision == previewRevision)
+                {
+                    StatusText.Text = $"Aperçu impossible : {ex.Message}";
+                    dialog.SetPreviewStatus($"Aperçu impossible : {ex.Message}", true);
+                }
             }
             finally
             {
@@ -451,7 +474,7 @@ public partial class MainWindow : Window
             if (brushScale == 0) selected = [sourceTriangle];
             else
             {
-                var diagonal = Math.Sqrt(Math.Pow(obj.Vertices.Max(v => v.X) - obj.Vertices.Min(v => v.X), 2) + Math.Pow(obj.Vertices.Max(v => v.Y) - obj.Vertices.Min(v => v.Y), 2) + Math.Pow(obj.Vertices.Max(v => v.Z) - obj.Vertices.Min(v => v.Z), 2));
+                var diagonal = _objectDiagonals.GetValueOrDefault(obj.Index, _radius * 2);
                 selected = await Task.Run(() => SelectNearbyTriangles(obj, sourceTriangle, hit.PointHit, Math.Max(.0001, diagonal * brushScale)));
             }
             if (!_paintSelection.TryGetValue(objectIndex, out var current)) _paintSelection[objectIndex] = current = [];
@@ -484,6 +507,9 @@ public partial class MainWindow : Window
     }
     int FindSourceTriangle(ModelObject obj, RayMeshGeometry3DHitTestResult hit)
     {
+        if (hit.ModelHit is GeometryModel3D renderedModel &&
+            _renderTriangleLookup.TryGetValue(renderedModel, out var renderedLookup))
+            return renderedLookup.GetValueOrDefault(TriangleKey(hit.VertexIndex1, hit.VertexIndex2, hit.VertexIndex3), -1);
         if (!_triangleLookup.TryGetValue(obj.Index, out var lookup))
         {
             lookup = new Dictionary<(int, int, int), int>(obj.Triangles.Count);
@@ -626,7 +652,7 @@ public partial class MainWindow : Window
     void New_Click(object sender, RoutedEventArgs e)
     {
         if (!ConfirmDiscard()) return;
-        _doc = null; _lastSlicerFile = null; _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
+        _doc = null; _lastSlicerFile = null; _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); _previewMeshes.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
     }
 
     bool ConfirmDiscard() => !_dirty || MessageBox.Show("Les modifications non enregistrées seront perdues. Continuer ?", "PolyChrom 3MF", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
@@ -649,35 +675,130 @@ public partial class MainWindow : Window
     void ComputeBounds()
     {
         if (_doc is null) return;
-        var vertices = _doc.Objects.SelectMany(o => o.Vertices).ToArray();
-        var minX = vertices.Min(v => v.X); var maxX = vertices.Max(v => v.X); var minY = vertices.Min(v => v.Y); var maxY = vertices.Max(v => v.Y); var minZ = vertices.Min(v => v.Z); var maxZ = vertices.Max(v => v.Z);
+        var minX = double.MaxValue; var minY = double.MaxValue; var minZ = double.MaxValue;
+        var maxX = double.MinValue; var maxY = double.MinValue; var maxZ = double.MinValue;
+        _objectDiagonals.Clear();
+        foreach (var obj in _doc.Objects)
+        {
+            var objectMinX = double.MaxValue; var objectMinY = double.MaxValue; var objectMinZ = double.MaxValue;
+            var objectMaxX = double.MinValue; var objectMaxY = double.MinValue; var objectMaxZ = double.MinValue;
+            foreach (var vertex in obj.Vertices)
+            {
+                minX = Math.Min(minX, vertex.X); minY = Math.Min(minY, vertex.Y); minZ = Math.Min(minZ, vertex.Z);
+                maxX = Math.Max(maxX, vertex.X); maxY = Math.Max(maxY, vertex.Y); maxZ = Math.Max(maxZ, vertex.Z);
+                objectMinX = Math.Min(objectMinX, vertex.X); objectMinY = Math.Min(objectMinY, vertex.Y); objectMinZ = Math.Min(objectMinZ, vertex.Z);
+                objectMaxX = Math.Max(objectMaxX, vertex.X); objectMaxY = Math.Max(objectMaxY, vertex.Y); objectMaxZ = Math.Max(objectMaxZ, vertex.Z);
+            }
+            _objectDiagonals[obj.Index] = Math.Sqrt(Math.Pow(objectMaxX - objectMinX, 2) + Math.Pow(objectMaxY - objectMinY, 2) + Math.Pow(objectMaxZ - objectMinZ, 2));
+        }
+        _modelMinZ = minZ;
         _modelCenter = new Point3D((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
         _center = _modelCenter;
         _radius = Math.Max(1, Math.Sqrt(_doc.SizeX * _doc.SizeX + _doc.SizeY * _doc.SizeY + _doc.SizeZ * _doc.SizeZ) / 2);
     }
 
+    internal static Dictionary<int, PreviewMesh> BuildPreviewMeshes(ModelDocument document)
+    {
+        var result = new Dictionary<int, PreviewMesh>();
+        if (document.TriangleCount <= FullDetailTriangleLimit) return result;
+        foreach (var obj in document.Objects)
+        {
+            var target = Math.Max(200, (int)Math.Round(LargeModelPreviewTarget * (obj.Triangles.Count / (double)document.TriangleCount)));
+            if (obj.Triangles.Count <= target * 1.15) continue;
+            result[obj.Index] = SimplifyForPreview(obj, target);
+        }
+        return result;
+    }
+
+    internal static PreviewMesh SimplifyForPreview(ModelObject obj, int targetTriangles)
+    {
+        if (obj.Vertices.Count == 0 || obj.Triangles.Count == 0) return new PreviewMesh([], []);
+        var minX = double.MaxValue; var minY = double.MaxValue; var minZ = double.MaxValue;
+        var maxX = double.MinValue; var maxY = double.MinValue; var maxZ = double.MinValue;
+        foreach (var vertex in obj.Vertices)
+        {
+            minX = Math.Min(minX, vertex.X); minY = Math.Min(minY, vertex.Y); minZ = Math.Min(minZ, vertex.Z);
+            maxX = Math.Max(maxX, vertex.X); maxY = Math.Max(maxY, vertex.Y); maxZ = Math.Max(maxZ, vertex.Z);
+        }
+        var largestSide = Math.Max(maxX - minX, Math.Max(maxY - minY, maxZ - minZ));
+        if (largestSide <= 1e-12)
+            return new PreviewMesh(obj.Vertices.ToList(), obj.Triangles.Select((triangle, index) => new PreviewTriangle(triangle.A, triangle.B, triangle.C, index)).ToList());
+        var gridResolution = Math.Clamp((int)Math.Sqrt(Math.Max(200, targetTriangles) / 6d), 18, 420);
+        var cellSize = largestSide / gridResolution;
+        var voxelIndices = new Dictionary<VoxelKey, int>(Math.Min(obj.Vertices.Count, Math.Max(1024, targetTriangles)));
+        var vertices = new List<Vertex>(Math.Min(obj.Vertices.Count, Math.Max(1024, targetTriangles)));
+        var triangles = new List<PreviewTriangle>(Math.Min(obj.Triangles.Count, Math.Max(1024, targetTriangles)));
+        var uniqueTriangles = new HashSet<(int A, int B, int C)>();
+
+        int VertexIndex(Vertex vertex)
+        {
+            var key = new VoxelKey(
+                (int)Math.Floor((vertex.X - minX) / cellSize),
+                (int)Math.Floor((vertex.Y - minY) / cellSize),
+                (int)Math.Floor((vertex.Z - minZ) / cellSize));
+            if (voxelIndices.TryGetValue(key, out var existing)) return existing;
+            var index = vertices.Count;
+            vertices.Add(vertex);
+            voxelIndices[key] = index;
+            return index;
+        }
+
+        for (var sourceIndex = 0; sourceIndex < obj.Triangles.Count; sourceIndex++)
+        {
+            var source = obj.Triangles[sourceIndex];
+            var a = VertexIndex(obj.Vertices[source.A]);
+            var b = VertexIndex(obj.Vertices[source.B]);
+            var c = VertexIndex(obj.Vertices[source.C]);
+            if (a == b || b == c || a == c) continue;
+            var key = TriangleKey(a, b, c);
+            if (!uniqueTriangles.Add(key)) continue;
+            triangles.Add(new PreviewTriangle(a, b, c, sourceIndex));
+        }
+        return new PreviewMesh(vertices, triangles);
+    }
+
+    internal sealed record PreviewMesh(List<Vertex> Vertices, List<PreviewTriangle> Triangles);
+    internal sealed record PreviewTriangle(int A, int B, int C, int SourceIndex);
+    readonly record struct VoxelKey(int X, int Y, int Z);
+
     void Render()
     {
         while (Viewer.Children.Count > 2) Viewer.Children.RemoveAt(2);
         _modelObjects.Clear();
+        _renderTriangleLookup.Clear();
         if (_doc is null) return;
         if (_grid) AddPlate();
         foreach (var obj in _doc.Objects)
         {
-            var positions = new Point3DCollection(obj.Vertices.Select(v => new Point3D(v.X, v.Y, v.Z)));
+            _previewMeshes.TryGetValue(obj.Index, out var preview);
+            var renderVertices = preview?.Vertices ?? obj.Vertices;
+            var renderTriangleCount = preview?.Triangles.Count ?? obj.Triangles.Count;
+            var positions = new Point3DCollection(renderVertices.Select(v => new Point3D(v.X, v.Y, v.Z)));
             positions.Freeze();
             var triangleColors = _selected?.TriangleAssignments.GetValueOrDefault(obj.Index);
             var colorCount = Math.Max(1, _selected?.Colors.Count ?? 1);
-            var capacity = Math.Max(3, obj.Triangles.Count * 3 / colorCount);
+            var capacity = Math.Max(3, renderTriangleCount * 3 / colorCount);
             var indicesByColor = Enumerable.Range(0, colorCount).Select(_ => new Int32Collection(capacity)).ToArray();
             var selectedIndices = new Int32Collection();
-            for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
+            var lookupByColor = preview is null ? null : Enumerable.Range(0, colorCount).Select(_ => new Dictionary<(int, int, int), int>()).ToArray();
+            Dictionary<(int, int, int), int>? selectedLookup = preview is null ? null : [];
+            for (var renderTriangleIndex = 0; renderTriangleIndex < renderTriangleCount; renderTriangleIndex++)
             {
-                var triangle = obj.Triangles[triangleIndex];
-                if (_paintSelection.TryGetValue(obj.Index, out var selectedTriangles) && selectedTriangles.Contains(triangleIndex)) { selectedIndices.Add(triangle.A); selectedIndices.Add(triangle.B); selectedIndices.Add(triangle.C); continue; }
-                var assigned = triangleColors is not null && triangleIndex < triangleColors.Length ? triangleColors[triangleIndex] : _selected?.Assignments.GetValueOrDefault(obj.Index, 0) ?? 0;
+                var previewTriangle = preview?.Triangles[renderTriangleIndex];
+                var sourceTriangleIndex = previewTriangle?.SourceIndex ?? renderTriangleIndex;
+                var triangle = previewTriangle is null
+                    ? obj.Triangles[renderTriangleIndex]
+                    : new Triangle(previewTriangle.A, previewTriangle.B, previewTriangle.C);
+                if (_paintSelection.TryGetValue(obj.Index, out var selectedTriangles) && selectedTriangles.Contains(sourceTriangleIndex))
+                {
+                    selectedIndices.Add(triangle.A); selectedIndices.Add(triangle.B); selectedIndices.Add(triangle.C);
+                    if (selectedLookup is not null) selectedLookup[TriangleKey(triangle.A, triangle.B, triangle.C)] = sourceTriangleIndex;
+                    continue;
+                }
+                var assigned = triangleColors is not null && sourceTriangleIndex < triangleColors.Length ? triangleColors[sourceTriangleIndex] : _selected?.Assignments.GetValueOrDefault(obj.Index, 0) ?? 0;
                 assigned = Math.Clamp(assigned, 0, colorCount - 1);
                 indicesByColor[assigned].Add(triangle.A); indicesByColor[assigned].Add(triangle.B); indicesByColor[assigned].Add(triangle.C);
+                lookupByColor?[assigned].Add(TriangleKey(triangle.A, triangle.B, triangle.C), sourceTriangleIndex);
             }
             for (var colorIndex = 0; colorIndex < colorCount; colorIndex++)
             {
@@ -691,13 +812,16 @@ public partial class MainWindow : Window
                 var material = new DiffuseMaterial(brush); material.Freeze();
                 var model = new GeometryModel3D(mesh, material) { BackMaterial = material };
                 _modelObjects[model] = obj.Index;
+                if (lookupByColor is not null) _renderTriangleLookup[model] = lookupByColor[colorIndex];
                 Viewer.Children.Add(new ModelVisual3D { Content = model });
             }
             if (selectedIndices.Count > 0)
             {
                 selectedIndices.Freeze(); var selectionMesh = new MeshGeometry3D { Positions = positions, TriangleIndices = selectedIndices }; selectionMesh.Freeze();
                 var selectionBrush = new SolidColorBrush(Color.FromRgb(255, 211, 45)); selectionBrush.Freeze(); var selectionMaterial = new DiffuseMaterial(selectionBrush); selectionMaterial.Freeze();
-                var selectionModel = new GeometryModel3D(selectionMesh, selectionMaterial) { BackMaterial = selectionMaterial }; _modelObjects[selectionModel] = obj.Index; Viewer.Children.Add(new ModelVisual3D { Content = selectionModel });
+                var selectionModel = new GeometryModel3D(selectionMesh, selectionMaterial) { BackMaterial = selectionMaterial }; _modelObjects[selectionModel] = obj.Index;
+                if (selectedLookup is not null) _renderTriangleLookup[selectionModel] = selectedLookup;
+                Viewer.Children.Add(new ModelVisual3D { Content = selectionModel });
             }
         }
         UpdateCamera();
@@ -705,7 +829,7 @@ public partial class MainWindow : Window
 
     void AddPlate()
     {
-        var size = Math.Max(_radius * 2.4, 80); var z = _doc!.Objects.SelectMany(o => o.Vertices).Min(v => v.Z) - .4;
+        var size = Math.Max(_radius * 2.4, 80); var z = _modelMinZ - .4;
         var mesh = new MeshGeometry3D { Positions = new Point3DCollection([new(_modelCenter.X-size/2,_modelCenter.Y-size/2,z),new(_modelCenter.X+size/2,_modelCenter.Y-size/2,z),new(_modelCenter.X+size/2,_modelCenter.Y+size/2,z),new(_modelCenter.X-size/2,_modelCenter.Y+size/2,z)]), TriangleIndices = new Int32Collection([0,1,2,0,2,3]) };
         Viewer.Children.Add(new ModelVisual3D { Content = new GeometryModel3D(mesh, new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(80, 100, 110, 125)))) });
     }

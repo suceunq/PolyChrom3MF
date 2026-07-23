@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.3
+
+- Nouveau mode « Logo monochrome » pour conserver uniquement la forme d’un symbole noir ou blanc et laisser le reste du modèle inchangé.
+- Choix direct de la couleur de filament du logo, inversion clair/sombre et seuil de détection réglable avec aperçu en direct.
+- Suppression des petites taches multicolores produites par la conversion des contours anticrénelés d’un logo.
+- Aperçu adaptatif cohérent pour les maillages de plusieurs millions de faces, avec conservation des indices source pour la sélection et l’export.
+- Import STL et affichage des modèles très denses accélérés, avec une consommation mémoire fortement réduite.
+- Calcul des motifs, des limites du modèle et du plateau optimisé pour les très grandes figurines.
+
 ## 1.7.2
 
 - Aperçu en direct du motif sur la figurine pendant le réglage de la projection, de la taille, de la rotation et des décalages.
