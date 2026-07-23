@@ -286,7 +286,11 @@ public partial class MainWindow : Window
             PatternService.ValidateImage(file.FileName);
             var options = new ImageImportOptionsWindow(file.FileName) { Owner = this };
             if (options.ShowDialog() != true) return;
-            preparedImage = await Task.Run(() => PatternService.PrepareImage(file.FileName, options.RemoveBackground, options.Tolerance));
+            // Read every WPF control value on the UI thread before starting image processing.
+            var removeBackground = options.RemoveBackground;
+            var tolerance = options.Tolerance;
+            var sourceImage = file.FileName;
+            preparedImage = await Task.Run(() => PatternService.PrepareImage(sourceImage, removeBackground, tolerance));
             dialog = new PatternWindow(preparedImage, _doc.Objects, _pattern, Path.GetFileName(file.FileName)) { Owner = this };
             if (dialog.ShowDialog() != true) return;
         }
