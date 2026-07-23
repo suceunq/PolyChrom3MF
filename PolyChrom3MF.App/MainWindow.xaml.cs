@@ -126,7 +126,17 @@ public partial class MainWindow : Window
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         Progress.IsIndeterminate = busy;
         if (text is not null) StatusText.Text = text;
+        SetActivity(busy, text);
         IsEnabled = !busy;
+    }
+
+    void SetActivity(bool visible, string? text = null, bool determinate = false, double value = 0)
+    {
+        ActivityOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (!visible) return;
+        if (!string.IsNullOrWhiteSpace(text)) ActivityText.Text = text;
+        ActivityProgress.IsIndeterminate = !determinate;
+        ActivityProgress.Value = Math.Clamp(value, 0, 100);
     }
 
     static void ApplyStandardMenuColors(ItemsControl menu)
@@ -903,7 +913,7 @@ public partial class MainWindow : Window
 
     async Task CheckForUpdatesAsync(bool automatic)
     {
-        if (!automatic) { IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = true; StatusText.Text = "Recherche d’une mise à jour…"; }
+        if (!automatic) { IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = true; StatusText.Text = "Recherche d’une mise à jour…"; SetActivity(true, "Recherche d’une mise à jour…"); }
         try
         {
             var update = await _updateService.GetAvailableUpdateAsync();
@@ -917,8 +927,8 @@ public partial class MainWindow : Window
             if (install != MessageBoxResult.Yes) { StatusText.Text = $"Mise à jour {update.Tag} reportée."; return; }
             if (_dirty && MessageBox.Show("Le logiciel devra redémarrer. Les modifications non enregistrées seront perdues. Continuer ?", "Enregistrer avant la mise à jour", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
-            IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = false; Progress.Minimum = 0; Progress.Maximum = 100; Progress.Value = 0;
-            var progress = new Progress<double>(value => { Progress.Value = value; StatusText.Text = $"Téléchargement de la mise à jour… {value:0}%"; });
+            IsEnabled = false; Progress.Visibility = Visibility.Visible; Progress.IsIndeterminate = false; Progress.Minimum = 0; Progress.Maximum = 100; Progress.Value = 0; SetActivity(true, "Téléchargement de la mise à jour… 0 %", true, 0);
+            var progress = new Progress<double>(value => { Progress.Value = value; StatusText.Text = $"Téléchargement de la mise à jour… {value:0}%"; SetActivity(true, $"Téléchargement de la mise à jour… {value:0} %", true, value); });
             var installer = await _updateService.DownloadInstallerAsync(update, progress);
             _settings.PendingUpdateVersion = update.Version.ToString(3);
             _settings.PendingUpdateNotes = update.ReleaseNotes;
@@ -937,7 +947,7 @@ public partial class MainWindow : Window
             StatusText.Text = "Recherche de mise à jour impossible.";
             if (!automatic) MessageBox.Show($"Impossible de mettre à jour le logiciel pour le moment.\n\n{ex.Message}", "Mise à jour", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        finally { IsEnabled = true; Progress.Visibility = Visibility.Collapsed; Progress.IsIndeterminate = true; }
+        finally { IsEnabled = true; Progress.Visibility = Visibility.Collapsed; Progress.IsIndeterminate = true; SetActivity(false); }
     }
     void About_Click(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return; if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e); }

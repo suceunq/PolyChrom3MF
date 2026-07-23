@@ -58,6 +58,34 @@
           <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" MaxWidth="250">
             <Button Click="ViewIso_Click" Content="Iso" Margin="2"/><Button Click="ViewFront_Click" Content="Face" Margin="2"/><Button Click="ViewTop_Click" Content="Dessus" Margin="2"/><Button Click="ToggleGrid_Click" Content="Plateau" Margin="2"/><Button Click="Fit_Click" Content="Recentrer" Margin="2"/>
           </WrapPanel>
+          <Border x:Name="ActivityOverlay"
+                  Panel.ZIndex="20"
+                  Visibility="Collapsed"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Top"
+                  Width="520"
+                  MaxWidth="650"
+                  Margin="16,72,16,0"
+                  Padding="16,13"
+                  CornerRadius="10"
+                  Background="#F02B313C"
+                  BorderBrush="#58AFFF"
+                  BorderThickness="2">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="38"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Border Width="30" Height="30" CornerRadius="15" Background="#187FD1" VerticalAlignment="Top">
+                <TextBlock Text="●" Foreground="White" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                <TextBlock Text="TRAITEMENT EN COURS" Foreground="#8EC8FF" FontSize="11" FontWeight="Bold"/>
+                <TextBlock x:Name="ActivityText" Text="Traitement…" Foreground="White" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,3,0,9"/>
+                <ProgressBar x:Name="ActivityProgress" Height="7" Minimum="0" Maximum="100" IsIndeterminate="True"/>
+              </StackPanel>
+            </Grid>
+          </Border>
           <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="#A020242B" Padding="8" Margin="8"><TextBlock x:Name="DimensionsText"/></Border>
           <TextBlock x:Name="HintText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" Foreground="{DynamicResource MutedText}" Text="Importez ou déposez un fichier 3MF ou STL."/>
         </Grid>
