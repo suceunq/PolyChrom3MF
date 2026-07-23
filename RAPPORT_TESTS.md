@@ -1,7 +1,7 @@
-# Rapport de tests — PolyChrom 3MF 1.7.0
+# Rapport de tests — PolyChrom 3MF 1.7.1
 
 - Compilation Release : réussie, 0 erreur, 0 avertissement.
-- Tests automatisés : **47/47 réussis**, 0 échec, incluant grands fragments 3MF, génération de huit couleurs distinctes, motifs PNG, sélection précise, export sécurisé, projet portable avec PNG intégré, projets malformés refusés, détection de Snapmaker Orca et validation cryptographique des mises à jour GitHub.
+- Tests automatisés : **48/48 réussis**, 0 échec, incluant grands fragments 3MF, génération de huit couleurs distinctes, motifs PNG, sélection précise, lien PayPal officiel, export sécurisé, projet portable avec PNG intégré, projets malformés refusés, détection de Snapmaker Orca et validation cryptographique des mises à jour GitHub.
 - Audit NuGet : aucun paquet vulnérable connu, dépendances transitives incluses.
 - Projet partagé `.poly3mf` : modèle 3MF intégré, deux objets et toutes les affectations restaurés sans dépendre du fichier source original.
 - Eniac à huit couleurs : 500 000 triangles répartis sur les huit indices ; dimensions inchangées et maillage manifold dans PrusaSlicer 2.9.6.
@@ -14,4 +14,4 @@
 - Publication autonome win-x64 : réussie.
 - Démarrage portable : réussi.
 - PrusaSlicer 2.9.6 : exemples, STL converti et fichier Eniac exporté ouverts ; Eniac conserve 500 000 facettes et ses dimensions.
-- Installateur 1.7.0 : compilation réussie avec Inno Setup 6.7.3. L’installation locale n’a volontairement pas été lancée.
+- Installateur 1.7.1 : compilation réussie avec Inno Setup 6.7.3. L’installation locale n’a volontairement pas été lancée.

@@ -658,6 +658,11 @@ public partial class MainWindow : Window
     }
     void ShowWelcome() { var dialog = new WelcomeWindow { Owner = this }; dialog.ShowDialog(); _settings.ShowWelcome = dialog.ShowAtStartup; _settingsService.Save(_settings); }
     void Welcome_Click(object sender, RoutedEventArgs e) => ShowWelcome();
+    void Donate_Click(object sender, RoutedEventArgs e)
+    {
+        try { DonationService.Open(); }
+        catch (Exception ex) { MessageBox.Show($"Impossible d’ouvrir la page PayPal.\n\n{ex.Message}", "Soutenir PolyChrom 3MF", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
     async void Update_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(false);
 
     async Task CheckForUpdatesAsync(bool automatic)
