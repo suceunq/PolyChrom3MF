@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1
+
+- Nouvelle fenêtre de bienvenue avec présentation claire des fonctions de PolyChrom 3MF.
+- Ajout d’un encart facultatif pour soutenir le développement via PayPal.
+- Accès permanent au soutien depuis le menu Aide, même lorsque la bienvenue est masquée au démarrage.
+- Validation stricte de l’adresse : seules les pages de don HTTPS officielles `paypal.com` et `paypal.me` peuvent être ouvertes.
+
 ## 1.7.0
 
 - Import d'un PNG avec transparence, taille, rotation, décalage et ciblage d'un objet ou de toute la figurine.
