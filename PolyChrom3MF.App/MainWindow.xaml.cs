@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
     readonly Dictionary<int, HashSet<int>> _paintSelection = [];
     readonly Dictionary<int, Dictionary<(int A, int B, int C), int>> _triangleLookup = [];
+    readonly List<System.Windows.Point> _paintStrokePoints = [];
     readonly Stack<EditorState> _undo = [];
     readonly Stack<EditorState> _redo = [];
     AppSettings _settings;
@@ -40,8 +41,7 @@ public partial class MainWindow : Window
     PatternSettings? _pattern;
     System.Windows.Point _last;
     double _yaw = -40, _pitch = -25, _zoom = 1;
-    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _paintStrokeChanged, _shutdownForUpdate;
-    long _lastPaintSample;
+    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _shutdownForUpdate;
     int _generation, _colorCount = 4;
     string? _lastSlicerFile;
     Point3D _center, _modelCenter;
@@ -367,7 +367,15 @@ public partial class MainWindow : Window
             _paintStroke = false;
             Viewer?.ReleaseMouseCapture();
         }
+        UpdateBrushCursorVisibility();
         StatusText.Text = enabled ? "Mode zones actif : choisissez Face par face ou Pinceau fluide. Clic droit pour tourner." : "Sélection de zones désactivée.";
+    }
+
+    void PaintTool_Changed(object sender, SelectionChangedEventArgs e) => UpdateBrushCursorVisibility();
+    void UpdateBrushCursorVisibility()
+    {
+        if (PaintBrushCursor is null || PaintMode is null || PaintTool is null) return;
+        PaintBrushCursor.Visibility = PaintMode.IsChecked == true && PaintTool.SelectedIndex == 1 && Viewer.IsMouseOver ? Visibility.Visible : Visibility.Collapsed;
     }
 
     async Task SelectPaintZone(RayMeshGeometry3DHitTestResult hit, GeometryModel3D model)
@@ -696,9 +704,11 @@ public partial class MainWindow : Window
             {
                 Viewer.CaptureMouse();
                 _paintStroke = true;
-                _paintStrokeChanged = false;
-                _lastPaintSample = 0;
-                SelectPaintBrushFromView(_last);
+                _paintStrokePoints.Clear();
+                _paintStrokePoints.Add(_last);
+                PaintStrokePreview.Points = new PointCollection([_last]);
+                PaintStrokePreview.StrokeThickness = BrushRadiusPixels() * 2;
+                PaintStrokePreview.Visibility = Visibility.Visible;
             }
             else await SelectPaintFromView(_last);
             e.Handled = true;
@@ -712,14 +722,16 @@ public partial class MainWindow : Window
     void Viewer_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
         var p = e.GetPosition(Viewer);
+        UpdateBrushCursor(p);
         var paintMode = PaintMode.IsChecked == true;
         if (paintMode && _paintStroke && e.LeftButton == MouseButtonState.Pressed)
         {
             var dx = p.X - _last.X;
             var dy = p.Y - _last.Y;
-            if (dx * dx + dy * dy >= 4)
+            if (dx * dx + dy * dy >= 2.25)
             {
-                SelectPaintBrushFromView(p);
+                _paintStrokePoints.Add(p);
+                PaintStrokePreview.Points.Add(p);
                 _last = p;
             }
             return;
@@ -740,19 +752,66 @@ public partial class MainWindow : Window
         _last = p;
         UpdateCamera();
     }
-    void Viewer_MouseUp(object sender, MouseButtonEventArgs e)
+    async void Viewer_MouseUp(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton == MouseButton.Left && _paintStroke)
         {
             _paintStroke = false;
-            if (_paintStrokeChanged)
+            Viewer.ReleaseMouseCapture();
+            var points = _paintStrokePoints.ToArray();
+            _paintStrokePoints.Clear();
+            if (points.Length > 0 && _doc is not null && CapturePaintProjection() is { } projection)
             {
-                UpdatePaintSelectionText();
-                Render();
-                StatusText.Text = $"Trait terminé · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
+                SetBusy(true, "Application du trait de pinceau…");
+                try
+                {
+                    var selection = await Task.Run(() => SelectTrianglesFromScreenStroke(_doc, points, BrushRadiusPixels(), projection));
+                    foreach (var pair in selection)
+                    {
+                        if (!_paintSelection.TryGetValue(pair.Key, out var current)) _paintSelection[pair.Key] = current = [];
+                        current.UnionWith(pair.Value);
+                    }
+                    UpdatePaintSelectionText();
+                    Render();
+                    StatusText.Text = selection.Count == 0
+                        ? "Le trait n’a rencontré aucune surface visible."
+                        : $"Trait terminé · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Le trait n’a pas pu être appliqué.\n\n{ex.Message}", "Pinceau", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                finally
+                {
+                    PaintStrokePreview.Visibility = Visibility.Collapsed;
+                    PaintStrokePreview.Points.Clear();
+                    SetBusy(false);
+                    UpdateBrushCursor(e.GetPosition(Viewer));
+                }
             }
+            else PaintStrokePreview.Visibility = Visibility.Collapsed;
+            return;
         }
         Viewer.ReleaseMouseCapture();
+    }
+
+    void Viewer_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_paintStroke && PaintBrushCursor is not null) PaintBrushCursor.Visibility = Visibility.Collapsed;
+    }
+
+    void UpdateBrushCursor(System.Windows.Point point)
+    {
+        if (PaintBrushCursor is null || PaintMode.IsChecked != true || PaintTool.SelectedIndex != 1)
+        {
+            if (PaintBrushCursor is not null) PaintBrushCursor.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var radius = BrushRadiusPixels();
+        PaintBrushCursor.Width = PaintBrushCursor.Height = radius * 2;
+        Canvas.SetLeft(PaintBrushCursor, point.X - radius);
+        Canvas.SetTop(PaintBrushCursor, point.Y - radius);
+        PaintBrushCursor.Visibility = Visibility.Visible;
     }
 
     internal static Point3D? CursorPointOnPlane(Camera? camera, System.Windows.Point cursor, double viewportWidth, double viewportHeight, Point3D planePoint)
@@ -811,47 +870,146 @@ public partial class MainWindow : Window
         if (selectedHit is not null && selectedModel is not null) await SelectPaintZone(selectedHit, selectedModel);
     }
 
-    void SelectPaintBrushFromView(System.Windows.Point point)
+    double BrushRadiusPixels() => PaintBrushSize.SelectedIndex switch { 0 => 4d, 1 => 8d, 2 => 14d, 3 => 22d, _ => 32d };
+
+    internal static IReadOnlyList<System.Windows.Point> BrushStrokeCenters(System.Windows.Point from, System.Windows.Point to, double spacing)
     {
-        var now = Environment.TickCount64;
-        if (_lastPaintSample != 0 && now - _lastPaintSample < 20) return;
-        _lastPaintSample = now;
-        var radius = PaintBrushSize.SelectedIndex switch { 0 => 4d, 1 => 8d, 2 => 14d, 3 => 22d, _ => 32d };
-        var offsets = new[]
-        {
-            new Vector(0, 0), new Vector(radius, 0), new Vector(-radius, 0), new Vector(0, radius), new Vector(0, -radius),
-            new Vector(radius * .7, radius * .7), new Vector(-radius * .7, radius * .7),
-            new Vector(radius * .7, -radius * .7), new Vector(-radius * .7, -radius * .7)
-        };
-        var added = 0;
-        foreach (var offset in offsets)
-        {
-            RayMeshGeometry3DHitTestResult? selectedHit = null;
-            GeometryModel3D? selectedModel = null;
-            VisualTreeHelper.HitTest(Viewer, null, result =>
-            {
-                if (result is RayMeshGeometry3DHitTestResult hit && hit.ModelHit is GeometryModel3D model && _modelObjects.ContainsKey(model))
-                {
-                    selectedHit = hit;
-                    selectedModel = model;
-                    return HitTestResultBehavior.Stop;
-                }
-                return HitTestResultBehavior.Continue;
-            }, new PointHitTestParameters(point + offset));
-            if (selectedHit is null || selectedModel is null || _doc is null || !_modelObjects.TryGetValue(selectedModel, out var objectIndex)) continue;
-            var obj = _doc.Objects.FirstOrDefault(item => item.Index == objectIndex);
-            if (obj is null) continue;
-            var triangle = FindSourceTriangle(obj, selectedHit);
-            if (triangle < 0) continue;
-            if (!_paintSelection.TryGetValue(objectIndex, out var current)) _paintSelection[objectIndex] = current = [];
-            if (current.Add(triangle)) added++;
-        }
-        if (added == 0) return;
-        _paintStrokeChanged = true;
-        UpdatePaintSelectionText();
-        StatusText.Text = $"Pinceau actif · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
-        if ((_doc?.TriangleCount ?? 0) <= 300_000 && now % 100 < 25) Render();
+        spacing = Math.Max(1, spacing);
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        var distance = Math.Sqrt(dx * dx + dy * dy);
+        var steps = Math.Max(1, (int)Math.Ceiling(distance / spacing));
+        return Enumerable.Range(0, steps + 1).Select(step => new System.Windows.Point(from.X + dx * step / steps, from.Y + dy * step / steps)).ToArray();
     }
+
+    PaintProjection? CapturePaintProjection()
+    {
+        if (Viewer.Camera is not ProjectionCamera camera || Viewer.ActualWidth <= 0 || Viewer.ActualHeight <= 0) return null;
+        var forward = camera.LookDirection;
+        var up = camera.UpDirection;
+        if (!NormalizeBasis(ref forward, ref up, out var right)) return null;
+        return camera switch
+        {
+            PerspectiveCamera perspective => new PaintProjection(camera.Position, forward, up, right, true, perspective.FieldOfView, Viewer.ActualWidth, Viewer.ActualHeight),
+            OrthographicCamera orthographic => new PaintProjection(camera.Position, forward, up, right, false, orthographic.Width, Viewer.ActualWidth, Viewer.ActualHeight),
+            _ => null
+        };
+    }
+
+    internal static Dictionary<int, HashSet<int>> SelectTrianglesFromScreenStroke(
+        ModelDocument document,
+        IReadOnlyList<System.Windows.Point> stroke,
+        double radius,
+        PaintProjection projection)
+    {
+        var result = new Dictionary<int, HashSet<int>>();
+        if (stroke.Count == 0 || radius <= 0 || projection.Width <= 0 || projection.Height <= 0) return result;
+
+        const int cellSize = 3;
+        var gridWidth = Math.Max(1, (int)Math.Ceiling(projection.Width / cellSize));
+        var gridHeight = Math.Max(1, (int)Math.Ceiling(projection.Height / cellSize));
+        var mask = new bool[gridWidth * gridHeight];
+        var radiusCells = Math.Max(1, (int)Math.Ceiling(radius / cellSize));
+        var centers = new List<System.Windows.Point>();
+        if (stroke.Count == 1) centers.Add(stroke[0]);
+        else
+            for (var index = 1; index < stroke.Count; index++)
+                centers.AddRange(BrushStrokeCenters(stroke[index - 1], stroke[index], Math.Max(1.5, radius * .25)));
+
+        foreach (var center in centers)
+        {
+            var centerX = (int)Math.Floor(center.X / cellSize);
+            var centerY = (int)Math.Floor(center.Y / cellSize);
+            for (var y = Math.Max(0, centerY - radiusCells); y <= Math.Min(gridHeight - 1, centerY + radiusCells); y++)
+                for (var x = Math.Max(0, centerX - radiusCells); x <= Math.Min(gridWidth - 1, centerX + radiusCells); x++)
+                {
+                    var dx = (x + .5) * cellSize - center.X;
+                    var dy = (y + .5) * cellSize - center.Y;
+                    if (dx * dx + dy * dy <= radius * radius) mask[y * gridWidth + x] = true;
+                }
+        }
+
+        var nearestDepth = Enumerable.Repeat(double.PositiveInfinity, mask.Length).ToArray();
+        var candidates = new List<PaintCandidate>();
+        foreach (var obj in document.Objects)
+        {
+            for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
+            {
+                var triangle = obj.Triangles[triangleIndex];
+                var a = obj.Vertices[triangle.A];
+                var b = obj.Vertices[triangle.B];
+                var c = obj.Vertices[triangle.C];
+                var center = new Point3D((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
+                if (!TryProjectPoint(center, projection, out var screen, out var depth)) continue;
+                var x = (int)(screen.X / cellSize);
+                var y = (int)(screen.Y / cellSize);
+                if ((uint)x >= (uint)gridWidth || (uint)y >= (uint)gridHeight) continue;
+                var cell = y * gridWidth + x;
+                if (!mask[cell]) continue;
+                candidates.Add(new PaintCandidate(obj.Index, triangleIndex, cell, depth));
+                if (depth < nearestDepth[cell]) nearestDepth[cell] = depth;
+            }
+        }
+
+        foreach (var candidate in candidates)
+        {
+            // Garde uniquement la peau visible de la figurine et évite de peindre sa face arrière.
+            var candidateX = candidate.Cell % gridWidth;
+            var candidateY = candidate.Cell / gridWidth;
+            var visibleDepth = nearestDepth[candidate.Cell];
+            for (var y = Math.Max(0, candidateY - 1); y <= Math.Min(gridHeight - 1, candidateY + 1); y++)
+                for (var x = Math.Max(0, candidateX - 1); x <= Math.Min(gridWidth - 1, candidateX + 1); x++)
+                    visibleDepth = Math.Min(visibleDepth, nearestDepth[y * gridWidth + x]);
+            var tolerance = Math.Max(0.001, visibleDepth * .006);
+            if (candidate.Depth > visibleDepth + tolerance) continue;
+            if (!result.TryGetValue(candidate.ObjectIndex, out var triangles)) result[candidate.ObjectIndex] = triangles = [];
+            triangles.Add(candidate.TriangleIndex);
+        }
+        return result;
+    }
+
+    internal static bool TryProjectPoint(Point3D point, PaintProjection projection, out System.Windows.Point screen, out double depth)
+    {
+        screen = default;
+        var relative = point - projection.Position;
+        depth = Vector3D.DotProduct(relative, projection.Forward);
+        if (depth <= 1e-9 || !double.IsFinite(depth)) return false;
+        var horizontal = Vector3D.DotProduct(relative, projection.Right);
+        var vertical = Vector3D.DotProduct(relative, projection.Up);
+        double normalizedX;
+        double normalizedY;
+        if (projection.Perspective)
+        {
+            var halfWidth = Math.Tan(projection.FieldOfViewOrWidth * Math.PI / 360);
+            var halfHeight = halfWidth * projection.Height / projection.Width;
+            if (halfWidth <= 0 || halfHeight <= 0) return false;
+            normalizedX = horizontal / (depth * halfWidth);
+            normalizedY = vertical / (depth * halfHeight);
+        }
+        else
+        {
+            var halfWidth = projection.FieldOfViewOrWidth / 2;
+            var halfHeight = halfWidth * projection.Height / projection.Width;
+            if (halfWidth <= 0 || halfHeight <= 0) return false;
+            normalizedX = horizontal / halfWidth;
+            normalizedY = vertical / halfHeight;
+        }
+        if (!double.IsFinite(normalizedX) || !double.IsFinite(normalizedY)) return false;
+        screen = new System.Windows.Point((normalizedX + 1) * projection.Width / 2, (1 - normalizedY) * projection.Height / 2);
+        return screen.X >= 0 && screen.Y >= 0 && screen.X < projection.Width && screen.Y < projection.Height;
+    }
+
+    internal readonly record struct PaintProjection(
+        Point3D Position,
+        Vector3D Forward,
+        Vector3D Up,
+        Vector3D Right,
+        bool Perspective,
+        double FieldOfViewOrWidth,
+        double Width,
+        double Height);
+
+    readonly record struct PaintCandidate(int ObjectIndex, int TriangleIndex, int Cell, double Depth);
 
     void ViewIso_Click(object sender, RoutedEventArgs e) { _yaw = -40; _pitch = 25; UpdateCamera(); }
     void ViewFront_Click(object sender, RoutedEventArgs e) { _yaw = 180; _pitch = 0; UpdateCamera(); }

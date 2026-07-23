@@ -53,7 +53,12 @@
 
       <Border Grid.Column="1" Background="{DynamicResource ViewerBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,10,0">
         <Grid>
-          <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" ToolTip="Rotation orbitale 360° possible sur le modèle, le plateau ou le fond · Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
+          <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" MouseLeave="Viewer_MouseLeave" ToolTip="Rotation orbitale 360° possible sur le modèle, le plateau ou le fond · Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
+          <Canvas IsHitTestVisible="False" Panel.ZIndex="15">
+            <Polyline x:Name="PaintStrokePreview" Visibility="Collapsed" Stroke="#99FFD32D" StrokeThickness="16"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+            <Ellipse x:Name="PaintBrushCursor" Visibility="Collapsed" Stroke="#FFFFD32D" StrokeThickness="2" Fill="#22FFD32D"/>
+          </Canvas>
           <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" MaxWidth="250">
             <Button Click="ViewIso_Click" Content="Iso" Margin="2"/><Button Click="ViewFront_Click" Content="Face" Margin="2"/><Button Click="ViewTop_Click" Content="Dessus" Margin="2"/><Button Click="ToggleGrid_Click" Content="Plateau" Margin="2"/><Button Click="Fit_Click" Content="Recentrer" Margin="2"/>
           </WrapPanel>
@@ -104,9 +109,9 @@
               <TextBlock Text="COLORATION MANUELLE" FontWeight="Bold"/>
               <CheckBox x:Name="PaintMode" Content="Sélectionner des zones sur le modèle" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed" Margin="0,7,0,5"/>
               <TextBlock Text="Outil" FontSize="12" Margin="0,2,0,3"/>
-              <ComboBox x:Name="PaintTool" SelectedIndex="0" Margin="0,0,0,5"><ComboBoxItem Content="Face par face (clic)"/><ComboBoxItem Content="Pinceau fluide (cliquer-glisser)"/></ComboBox>
+              <ComboBox x:Name="PaintTool" SelectedIndex="0" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Face par face (clic)"/><ComboBoxItem Content="Pinceau fluide (cliquer-glisser)"/></ComboBox>
               <TextBlock Text="Taille du pinceau" FontSize="12" Margin="0,2,0,3"/>
-              <ComboBox x:Name="PaintBrushSize" SelectedIndex="1" Margin="0,0,0,5"><ComboBoxItem Content="Très fin — 8 px"/><ComboBoxItem Content="Fin — 16 px"/><ComboBoxItem Content="Moyen — 28 px"/><ComboBoxItem Content="Large — 44 px"/><ComboBoxItem Content="Très large — 64 px"/></ComboBox>
+              <ComboBox x:Name="PaintBrushSize" SelectedIndex="1" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Très fin — 8 px"/><ComboBoxItem Content="Fin — 16 px"/><ComboBoxItem Content="Moyen — 28 px"/><ComboBoxItem Content="Large — 44 px"/><ComboBoxItem Content="Très large — 64 px"/></ComboBox>
               <TextBlock Text="Couleur à appliquer" FontSize="12" Margin="0,2,0,3"/><ComboBox x:Name="PaintColorCombo" DisplayMemberPath="Label" SelectedIndex="0" Margin="0,0,0,5"/>
               <TextBlock x:Name="PaintSelectionText" Text="0 triangle sélectionné" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,0,0,5"/>
               <WrapPanel><Button Click="ApplyPaintSelection_Click" Content="Appliquer la couleur"/><Button Click="ClearPaintSelection_Click" Content="Effacer"/></WrapPanel>
