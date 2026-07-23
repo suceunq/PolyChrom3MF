@@ -19,18 +19,22 @@ public sealed class PatternWindow : Window
     readonly string _imagePath;
     readonly ComboBox _mode = new();
     readonly ComboBox _target = new();
+    readonly ComboBox _logoColor = new();
     readonly Slider _scale = Slider(10, 400, 100);
     readonly Slider _rotation = Slider(-180, 180, 0);
     readonly Slider _offsetX = Slider(-100, 100, 0);
     readonly Slider _offsetY = Slider(-100, 100, 0);
+    readonly Slider _logoThreshold = Slider(1, 254, 128);
     readonly CheckBox _variants = new() { Content = new TextBlock { Text = "Créer quatre propositions avec quatre projections différentes", TextWrapping = TextWrapping.Wrap }, IsChecked = true };
+    readonly CheckBox _monochromeLogo = new() { Content = new TextBlock { Text = "Mode logo monochrome — conserver uniquement les formes du logo", TextWrapping = TextWrapping.Wrap } };
+    readonly CheckBox _invertLogo = new() { Content = new TextBlock { Text = "Logo sombre sur fond clair (inverser noir/blanc)", TextWrapping = TextWrapping.Wrap } };
     readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     readonly TextBlock _previewStatus = new() { Text = "L’aperçu se met à jour au relâchement du curseur.", Margin = new Thickness(0, 7, 0, 0) };
 
     public PatternSettings Value { get; private set; }
     public event Action<PatternSettings>? PreviewRequested;
 
-    public PatternWindow(string imagePath, IReadOnlyList<ModelObject> objects, PatternSettings? current = null, string? displayName = null)
+    public PatternWindow(string imagePath, IReadOnlyList<ModelObject> objects, IReadOnlyList<PaletteColor> colors, PatternSettings? current = null, string? displayName = null)
     {
         _imagePath = imagePath;
         displayName ??= Path.GetFileName(imagePath);
@@ -38,11 +42,16 @@ public sealed class PatternWindow : Window
         Title = "Appliquer un motif image"; Width = 650; MinHeight = 700; MaxHeight = Math.Max(700, SystemParameters.WorkArea.Height * .92); SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         _mode.ItemsSource = new[] { new Option<PatternMode>("Projection frontale", PatternMode.Front), new Option<PatternMode>("Enveloppement cylindrique", PatternMode.Cylindrical), new Option<PatternMode>("Motif répété", PatternMode.Repeated), new Option<PatternMode>("Projection triplanaire", PatternMode.Triplanar) }; _mode.DisplayMemberPath = nameof(Option<PatternMode>.Label); _mode.SelectedIndex = (int)Value.Mode;
         var targets = new List<Option<int>> { new("Toute la figurine", -1) }; targets.AddRange(objects.Select(obj => new Option<int>(obj.ToString(), obj.Index))); _target.ItemsSource = targets; _target.DisplayMemberPath = nameof(Option<int>.Label); _target.SelectedItem = targets.FirstOrDefault(item => item.Value == Value.TargetObject) ?? targets[0];
+        var logoColors = colors.Select((color, index) => new Option<int>($"{color.Name}  {color.Hex}", index)).ToList();
+        _logoColor.ItemsSource = logoColors; _logoColor.DisplayMemberPath = nameof(Option<int>.Label); _logoColor.SelectedIndex = Math.Clamp(Value.LogoColorIndex, 0, Math.Max(0, logoColors.Count - 1));
         _scale.Value = Value.Scale; _rotation.Value = Value.Rotation; _offsetX.Value = Value.OffsetX; _offsetY.Value = Value.OffsetY; _variants.IsChecked = Value.FourVariants;
+        _monochromeLogo.IsChecked = Value.MonochromeLogo; _invertLogo.IsChecked = Value.InvertLogo; _logoThreshold.Value = Value.LogoThreshold;
         _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); Value = ReadSettings(); PreviewRequested?.Invoke(Value); };
-        _mode.SelectionChanged += (_, _) => QueuePreview(); _target.SelectionChanged += (_, _) => QueuePreview();
-        TrackSlider(_scale); TrackSlider(_rotation); TrackSlider(_offsetX); TrackSlider(_offsetY);
+        _mode.SelectionChanged += (_, _) => QueuePreview(); _target.SelectionChanged += (_, _) => QueuePreview(); _logoColor.SelectionChanged += (_, _) => QueuePreview();
+        TrackSlider(_scale); TrackSlider(_rotation); TrackSlider(_offsetX); TrackSlider(_offsetY); TrackSlider(_logoThreshold);
         _variants.Checked += (_, _) => QueuePreview(); _variants.Unchecked += (_, _) => QueuePreview();
+        _monochromeLogo.Checked += (_, _) => { UpdateLogoControls(); QueuePreview(); }; _monochromeLogo.Unchecked += (_, _) => { UpdateLogoControls(); QueuePreview(); };
+        _invertLogo.Checked += (_, _) => QueuePreview(); _invertLogo.Unchecked += (_, _) => QueuePreview();
         Loaded += (_, _) => QueuePreview();
         Closed += (_, _) => _previewTimer.Stop();
 
@@ -53,6 +62,13 @@ public sealed class PatternWindow : Window
         var preview = new Image { Source = LoadPreview(imagePath), Height = 190, Stretch = System.Windows.Media.Stretch.Uniform, Margin = new Thickness(0, 0, 0, 14) };
         panel.Children.Add(new Border { Background = (System.Windows.Media.Brush)Application.Current.Resources["InputBackground"], BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["PanelBorder"], BorderThickness = new Thickness(1), Padding = new Thickness(8), Child = preview });
         panel.Children.Add(Field("Application", _target)); panel.Children.Add(Field("Projection", _mode)); panel.Children.Add(_variants);
+        var logoPanel = new StackPanel { Margin = new Thickness(0, 12, 0, 2) };
+        logoPanel.Children.Add(_monochromeLogo);
+        logoPanel.Children.Add(new TextBlock { Text = "Le fond et les autres pixels conservent la couleur actuelle du modèle. Idéal pour des symboles ou des logos noirs et blancs.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(22, 4, 0, 5), Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"] });
+        logoPanel.Children.Add(Field("Couleur de filament du logo", _logoColor));
+        logoPanel.Children.Add(_invertLogo);
+        logoPanel.Children.Add(SliderField("Seuil de détection du logo", _logoThreshold, ""));
+        panel.Children.Add(logoPanel);
         panel.Children.Add(SliderField("Taille du motif", _scale, "%")); panel.Children.Add(SliderField("Rotation", _rotation, "°")); panel.Children.Add(SliderField("Décalage horizontal", _offsetX, "%")); panel.Children.Add(SliderField("Décalage vertical", _offsetY, "%"));
         _previewStatus.Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"];
         panel.Children.Add(_previewStatus);
@@ -60,6 +76,7 @@ public sealed class PatternWindow : Window
         var cancel = new Button { Content = "Annuler", IsCancel = true, MinWidth = 90 }; var apply = new Button { Content = "Appliquer le motif", IsDefault = true, MinWidth = 145 };
         apply.Click += Apply; buttons.Children.Add(cancel); buttons.Children.Add(apply); panel.Children.Add(buttons);
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        UpdateLogoControls();
     }
 
     void Apply(object sender, RoutedEventArgs e)
@@ -69,7 +86,28 @@ public sealed class PatternWindow : Window
         DialogResult = true;
     }
 
-    PatternSettings ReadSettings() => new(_imagePath, ((Option<PatternMode>)_mode.SelectedItem).Value, _scale.Value, _rotation.Value, _offsetX.Value, _offsetY.Value, ((Option<int>)_target.SelectedItem).Value, _variants.IsChecked == true, DisplayName: Value.DisplayName);
+    PatternSettings ReadSettings() => new(
+        _imagePath,
+        ((Option<PatternMode>)_mode.SelectedItem).Value,
+        _scale.Value,
+        _rotation.Value,
+        _offsetX.Value,
+        _offsetY.Value,
+        ((Option<int>)_target.SelectedItem).Value,
+        _variants.IsChecked == true,
+        DisplayName: Value.DisplayName,
+        MonochromeLogo: _monochromeLogo.IsChecked == true,
+        LogoColorIndex: ((Option<int>?)_logoColor.SelectedItem)?.Value ?? 0,
+        InvertLogo: _invertLogo.IsChecked == true,
+        LogoThreshold: (byte)Math.Round(_logoThreshold.Value));
+
+    void UpdateLogoControls()
+    {
+        var enabled = _monochromeLogo.IsChecked == true;
+        _logoColor.IsEnabled = enabled;
+        _invertLogo.IsEnabled = enabled;
+        _logoThreshold.IsEnabled = enabled;
+    }
 
     void QueuePreview()
     {

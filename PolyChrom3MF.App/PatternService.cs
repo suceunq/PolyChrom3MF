@@ -6,7 +6,21 @@ namespace PolyChrom3MF.App;
 
 public enum PatternMode { Front, Cylindrical, Repeated, Triplanar }
 
-public sealed record PatternSettings(string ImagePath, PatternMode Mode = PatternMode.Front, double Scale = 100, double Rotation = 0, double OffsetX = 0, double OffsetY = 0, int TargetObject = -1, bool FourVariants = true, byte AlphaThreshold = 24, string? DisplayName = null);
+public sealed record PatternSettings(
+    string ImagePath,
+    PatternMode Mode = PatternMode.Front,
+    double Scale = 100,
+    double Rotation = 0,
+    double OffsetX = 0,
+    double OffsetY = 0,
+    int TargetObject = -1,
+    bool FourVariants = true,
+    byte AlphaThreshold = 24,
+    string? DisplayName = null,
+    bool MonochromeLogo = false,
+    int LogoColorIndex = 0,
+    bool InvertLogo = false,
+    byte LogoThreshold = 128);
 
 public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTriangles);
 
@@ -22,6 +36,8 @@ public sealed class PatternService
         // Parsing hexadecimal WPF colors for every triangle was the dominant cost
         // on dense models. Resolve the printable palette once for this whole pass.
         var palette = proposal.Colors.Select(color => color.Color).ToArray();
+        if (palette.Length == 0 || settings.MonochromeLogo && settings.LogoColorIndex >= palette.Length)
+            throw new InvalidDataException("La couleur de filament choisie pour le logo n’existe pas dans cette proposition.");
         var mode = modeOverride ?? settings.Mode;
         var bounds = Bounds(document);
         var colored = 0; var transparent = 0;
@@ -47,7 +63,16 @@ public sealed class PatternService
                 v = repeats ? Wrap(v) : Math.Clamp(v, 0, 1);
                 var pixel = image.Pixel(u, v);
                 if (pixel.A < settings.AlphaThreshold) { transparent++; continue; }
-                assignments[triangleIndex] = Nearest(pixel, palette);
+                if (settings.MonochromeLogo)
+                {
+                    if (!IsLogoPixel(pixel.R, pixel.G, pixel.B, settings.LogoThreshold, settings.InvertLogo))
+                    {
+                        transparent++;
+                        continue;
+                    }
+                    assignments[triangleIndex] = settings.LogoColorIndex;
+                }
+                else assignments[triangleIndex] = Nearest(pixel, palette);
                 colored++;
             }
         }
@@ -56,8 +81,14 @@ public sealed class PatternService
 
     public static void ValidateSettings(PatternSettings settings)
     {
-        if (settings is null || string.IsNullOrWhiteSpace(settings.ImagePath) || settings.ImagePath.Length > 1024 || !Enum.IsDefined(settings.Mode) || !double.IsFinite(settings.Scale) || settings.Scale is < 10 or > 400 || !double.IsFinite(settings.Rotation) || settings.Rotation is < -180 or > 180 || !double.IsFinite(settings.OffsetX) || settings.OffsetX is < -200 or > 200 || !double.IsFinite(settings.OffsetY) || settings.OffsetY is < -200 or > 200 || settings.TargetObject < -1 || settings.DisplayName?.Length > 260 || settings.DisplayName?.Any(char.IsControl) == true)
+        if (settings is null || string.IsNullOrWhiteSpace(settings.ImagePath) || settings.ImagePath.Length > 1024 || !Enum.IsDefined(settings.Mode) || !double.IsFinite(settings.Scale) || settings.Scale is < 10 or > 400 || !double.IsFinite(settings.Rotation) || settings.Rotation is < -180 or > 180 || !double.IsFinite(settings.OffsetX) || settings.OffsetX is < -200 or > 200 || !double.IsFinite(settings.OffsetY) || settings.OffsetY is < -200 or > 200 || settings.TargetObject < -1 || settings.DisplayName?.Length > 260 || settings.DisplayName?.Any(char.IsControl) == true || settings.LogoColorIndex is < 0 or > 31 || settings.LogoThreshold is < 1 or > 254)
             throw new InvalidDataException("Les réglages du motif image sont invalides.");
+    }
+
+    internal static bool IsLogoPixel(byte red, byte green, byte blue, byte threshold, bool invert)
+    {
+        var luminance = (red * 299 + green * 587 + blue * 114) / 1000;
+        return invert ? luminance <= threshold : luminance >= threshold;
     }
 
     public static void ValidateImage(string path) => _ = Load(path);

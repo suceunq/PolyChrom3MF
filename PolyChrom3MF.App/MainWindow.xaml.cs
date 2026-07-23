@@ -321,7 +321,7 @@ public partial class MainWindow : Window
             var tolerance = options.Tolerance;
             var sourceImage = file.FileName;
             preparedImage = await Task.Run(() => PatternService.PrepareImage(sourceImage, removeBackground, tolerance));
-            dialog = new PatternWindow(preparedImage, _doc.Objects, _pattern, Path.GetFileName(file.FileName)) { Owner = this };
+            dialog = new PatternWindow(preparedImage, _doc.Objects, _selected.Colors, _pattern, Path.GetFileName(file.FileName)) { Owner = this };
             dialog.PreviewRequested += PreviewPattern;
             var accepted = dialog.ShowDialog() == true;
             Interlocked.Increment(ref previewRevision);
