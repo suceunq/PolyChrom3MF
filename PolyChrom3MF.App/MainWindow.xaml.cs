@@ -44,7 +44,7 @@ public partial class MainWindow : Window
     long _lastPaintSample;
     int _generation, _colorCount = 4;
     string? _lastSlicerFile;
-    Point3D _center;
+    Point3D _center, _modelCenter;
     double _radius = 100;
 
     public MainWindow()
@@ -584,7 +584,8 @@ public partial class MainWindow : Window
         if (_doc is null) return;
         var vertices = _doc.Objects.SelectMany(o => o.Vertices).ToArray();
         var minX = vertices.Min(v => v.X); var maxX = vertices.Max(v => v.X); var minY = vertices.Min(v => v.Y); var maxY = vertices.Max(v => v.Y); var minZ = vertices.Min(v => v.Z); var maxZ = vertices.Max(v => v.Z);
-        _center = new Point3D((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        _modelCenter = new Point3D((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        _center = _modelCenter;
         _radius = Math.Max(1, Math.Sqrt(_doc.SizeX * _doc.SizeX + _doc.SizeY * _doc.SizeY + _doc.SizeZ * _doc.SizeZ) / 2);
     }
 
@@ -638,19 +639,37 @@ public partial class MainWindow : Window
     void AddPlate()
     {
         var size = Math.Max(_radius * 2.4, 80); var z = _doc!.Objects.SelectMany(o => o.Vertices).Min(v => v.Z) - .4;
-        var mesh = new MeshGeometry3D { Positions = new Point3DCollection([new(_center.X-size/2,_center.Y-size/2,z),new(_center.X+size/2,_center.Y-size/2,z),new(_center.X+size/2,_center.Y+size/2,z),new(_center.X-size/2,_center.Y+size/2,z)]), TriangleIndices = new Int32Collection([0,1,2,0,2,3]) };
+        var mesh = new MeshGeometry3D { Positions = new Point3DCollection([new(_modelCenter.X-size/2,_modelCenter.Y-size/2,z),new(_modelCenter.X+size/2,_modelCenter.Y-size/2,z),new(_modelCenter.X+size/2,_modelCenter.Y+size/2,z),new(_modelCenter.X-size/2,_modelCenter.Y+size/2,z)]), TriangleIndices = new Int32Collection([0,1,2,0,2,3]) };
         Viewer.Children.Add(new ModelVisual3D { Content = new GeometryModel3D(mesh, new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(80, 100, 110, 125)))) });
     }
 
     void UpdateCamera()
     {
-        var yaw = _yaw * Math.PI / 180; var pitch = Math.Clamp(_pitch, -89, 89) * Math.PI / 180; var distance = _radius * 3.0 * _zoom;
-        var direction = new Vector3D(Math.Cos(pitch) * Math.Sin(yaw), Math.Cos(pitch) * Math.Cos(yaw), Math.Sin(pitch));
+        (_yaw, _pitch) = (WrapAngle(_yaw), WrapAngle(_pitch));
+        var (direction, up) = OrbitFrame(_yaw, _pitch);
+        var distance = _radius * 3.0 * _zoom;
         var position = _center + direction * distance; var look = _center - position;
-        Viewer.Camera = _perspective ? new PerspectiveCamera(position, look, new Vector3D(0, 0, 1), 42) : new OrthographicCamera(position, look, new Vector3D(0, 0, 1), _radius * 2.4 * _zoom);
+        Viewer.Camera = _perspective ? new PerspectiveCamera(position, look, up, 42) : new OrthographicCamera(position, look, up, _radius * 2.4 * _zoom);
     }
 
-    void FitCamera() { _zoom = 1; _yaw = -40; _pitch = 25; UpdateCamera(); }
+    internal static (Vector3D Direction, Vector3D Up) OrbitFrame(double yawDegrees, double pitchDegrees)
+    {
+        var yaw = yawDegrees * Math.PI / 180;
+        var pitch = pitchDegrees * Math.PI / 180;
+        var direction = new Vector3D(Math.Cos(pitch) * Math.Sin(yaw), Math.Cos(pitch) * Math.Cos(yaw), Math.Sin(pitch));
+        var up = new Vector3D(-Math.Sin(pitch) * Math.Sin(yaw), -Math.Sin(pitch) * Math.Cos(yaw), Math.Cos(pitch));
+        direction.Normalize();
+        up.Normalize();
+        return (direction, up);
+    }
+
+    static double WrapAngle(double angle)
+    {
+        angle %= 360;
+        return angle > 180 ? angle - 360 : angle <= -180 ? angle + 360 : angle;
+    }
+
+    void FitCamera() { _center = _modelCenter; _zoom = 1; _yaw = -40; _pitch = 25; UpdateCamera(); }
     void Viewer_MouseWheel(object sender, MouseWheelEventArgs e)
     {
         var cursor = e.GetPosition(Viewer);

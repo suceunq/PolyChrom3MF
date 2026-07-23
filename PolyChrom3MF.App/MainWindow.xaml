@@ -53,7 +53,7 @@
 
       <Border Grid.Column="1" Background="{DynamicResource ViewerBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,10,0">
         <Grid>
-          <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" ToolTip="Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
+          <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" ToolTip="Rotation orbitale 360° possible sur le modèle, le plateau ou le fond · Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
           <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" MaxWidth="250">
             <Button Click="ViewIso_Click" Content="Iso" Margin="2"/><Button Click="ViewFront_Click" Content="Face" Margin="2"/><Button Click="ViewTop_Click" Content="Dessus" Margin="2"/><Button Click="ToggleGrid_Click" Content="Plateau" Margin="2"/><Button Click="Fit_Click" Content="Recentrer" Margin="2"/>
           </WrapPanel>
