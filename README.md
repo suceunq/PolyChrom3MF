@@ -1,4 +1,4 @@
-# PolyChrom 3MF 2.0.1
+# PolyChrom 3MF 2.0.2
 
 Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un aperçu solide optimisé pour les très gros modèles.
 
@@ -10,7 +10,7 @@ Application Windows française et locale pour colorer, personnaliser et prépare
 ## Fonctions
 
 - Import 3MF et STL (ASCII ou binaire) par boîte de dialogue ou glisser-déposer.
-- Import de motifs PNG avec transparence, taille, rotation, décalage et ciblage de toute la figurine ou d’un objet.
+- Import de plusieurs motifs PNG/JPG indépendants avec transparence, taille, rotation, décalage et ciblage propre à chaque objet ou à toute la figurine.
 - Quatre projections PNG imprimables : frontale, cylindrique, répétée et triplanaire, automatiquement réduites vers la palette de filaments.
 - Coloration manuelle cumulative d’une face précise ou de zones de plusieurs tailles avant application de la couleur choisie.
 - Prise en charge des conteneurs 3MF multiparties utilisant l’extension Production.

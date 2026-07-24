@@ -32,18 +32,28 @@ public sealed class ProjectService
         var modelName = SafeFileName(Path.GetFileNameWithoutExtension(document.Path)) + extension;
         var modelEntryName = "model/" + modelName;
         var triangleAssignments = proposals.Select(p => p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone())).ToList();
-        PatternSettings? storedPattern = null;
-        if (pattern is not null)
+        var patternSources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var nextPattern = 1;
+        PatternSettings? StorePattern(PatternSettings? value)
         {
-            PatternService.ValidateSettings(pattern);
-            var image = new FileInfo(pattern.ImagePath);
-            if (!image.Exists || image.Length <= 0 || !image.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Le PNG du motif est absent ou invalide.");
-            storedPattern = pattern with { ImagePath = "pattern/motif.png" };
+            if (value is null) return null;
+            PatternService.ValidateSettings(value);
+            var image = new FileInfo(value.ImagePath);
+            if (!image.Exists || image.Length <= 0 || !image.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Le PNG d’un motif est absent ou invalide.");
+            var sourcePath = image.FullName;
+            if (!patternSources.TryGetValue(sourcePath, out var entryPath))
+            {
+                entryPath = $"pattern/motif-{nextPattern++:000}.png";
+                patternSources[sourcePath] = entryPath;
+            }
+            return value with { ImagePath = entryPath };
         }
+        var storedPattern = StorePattern(pattern);
         var storedLayers = layers?.Select(group => group.Select(layer => layer with
         {
             TriangleOverrides = layer.TriangleOverrides.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()),
-            Pattern = layer.Pattern is null ? null : layer.Pattern with { ImagePath = storedPattern?.ImagePath ?? layer.Pattern.ImagePath }
+            Pattern = StorePattern(layer.Pattern)
         }).ToList()).ToList();
         var baseAssignments = layerBases?.Select(p => new Dictionary<int, int>(p.Assignments)).ToList();
         var baseTriangles = layerBases?.Select(p => p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone())).ToList();
@@ -63,10 +73,10 @@ public sealed class ProjectService
                 var model = archive.CreateEntry(modelEntryName, extension == ".3mf" ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
                 using (var source = new FileStream(modelSource, FileMode.Open, FileAccess.Read, FileShare.Read))
                 using (var destination = model.Open()) source.CopyTo(destination);
-                if (pattern is not null)
+                foreach (var asset in patternSources)
                 {
-                    var patternEntry = archive.CreateEntry("pattern/motif.png", CompressionLevel.Optimal);
-                    using (var patternSource = new FileStream(pattern.ImagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    var patternEntry = archive.CreateEntry(asset.Value, CompressionLevel.Optimal);
+                    using (var patternSource = new FileStream(asset.Key, FileMode.Open, FileAccess.Read, FileShare.Read))
                     using (var patternDestination = patternEntry.Open()) patternSource.CopyTo(patternDestination);
                 }
             }
@@ -110,7 +120,18 @@ public sealed class ProjectService
         ProjectData data;
         using (var stream = settings.Open()) data = JsonSerializer.Deserialize<ProjectData>(stream) ?? throw new InvalidDataException("Projet PolyChrom invalide.");
         Validate(data);
-        if (archive.Entries.Count != (data.Pattern is null ? 2 : 3)) throw new InvalidDataException("Le projet PolyChrom contient des fichiers inattendus.");
+        var referencedPatterns = new HashSet<string>(StringComparer.Ordinal);
+        if (data.Pattern is not null) referencedPatterns.Add(data.Pattern.ImagePath);
+        if (data.Layers is not null)
+            foreach (var layerPattern in data.Layers.SelectMany(group => group).Select(layer => layer.Pattern).Where(value => value is not null))
+                referencedPatterns.Add(layerPattern!.ImagePath);
+        foreach (var entryPath in referencedPatterns)
+            if (entryPath != "pattern/motif.png" && !Regex.IsMatch(entryPath, "^pattern/motif-[0-9]{3}\\.png$", RegexOptions.CultureInvariant))
+                throw new InvalidDataException("Le chemin d’un motif intégré est invalide.");
+        var allowedEntries = new HashSet<string>(referencedPatterns, StringComparer.Ordinal) { "project.json", data.SourcePath };
+        if (archive.Entries.Any(entry => !allowedEntries.Contains(entry.FullName)) || archive.Entries.Select(entry => entry.FullName).Distinct(StringComparer.Ordinal).Count() != archive.Entries.Count ||
+            archive.Entries.Count != allowedEntries.Count)
+            throw new InvalidDataException("Le projet PolyChrom contient des fichiers inattendus.");
 
         var modelEntry = archive.GetEntry(data.SourcePath);
         var modelName = Path.GetFileName(data.SourcePath);
@@ -123,18 +144,20 @@ public sealed class ProjectService
         Directory.CreateDirectory(folder);
         var extractedPath = Path.Combine(folder, modelName);
         Extract(modelEntry, extractedPath);
-        PatternSettings? extractedPattern = null;
-        if (data.Pattern is not null)
+        var extractedPatterns = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entryPath in referencedPatterns)
         {
-            if (data.Pattern.ImagePath != "pattern/motif.png") throw new InvalidDataException("Le chemin du motif intégré est invalide.");
-            var patternEntry = archive.GetEntry(data.Pattern.ImagePath);
+            var patternEntry = archive.GetEntry(entryPath);
             if (patternEntry is null || patternEntry.Length <= 0) throw new InvalidDataException("Le motif PNG intégré est absent.");
-            var patternPath = Path.Combine(folder, "motif.png");
+            var patternPath = Path.Combine(folder, Path.GetFileName(entryPath));
             Extract(patternEntry, patternPath);
-            extractedPattern = data.Pattern with { ImagePath = patternPath };
+            extractedPatterns[entryPath] = patternPath;
         }
+        PatternSettings? ExtractPattern(PatternSettings? value) =>
+            value is null ? null : value with { ImagePath = extractedPatterns[value.ImagePath] };
+        var extractedPattern = ExtractPattern(data.Pattern);
         var extractedLayers = data.Layers?.Select(group => group.Select(layer =>
-            layer.Pattern is null ? layer : layer with { Pattern = extractedPattern ?? layer.Pattern }).ToList()).ToList();
+            layer.Pattern is null ? layer : layer with { Pattern = ExtractPattern(layer.Pattern) }).ToList()).ToList();
         return data with { SourcePath = extractedPath, Pattern = extractedPattern, Layers = extractedLayers };
     }
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.2
+
+- Plusieurs motifs PNG/JPG indépendants peuvent désormais coexister dans un même projet, chacun ciblant un objet différent ou toute la figurine.
+- Le calque actif permet de transformer ou retirer uniquement le motif choisi sans effacer les autres.
+- Les projets `.poly3mf` embarquent et restaurent séparément toutes les images de motifs.
+- L’objet sélectionné est clairement indiqué et surligné dans la vue 3D ; il devient la cible proposée par défaut lors du prochain import de motif.
+- Le workflow GitHub Actions utilise maintenant un chemin de publication stable, indépendant du numéro de version.
+
 ## 2.0.1
 
 - Subdivision locale adaptative non destructive sous les motifs, logos, textes et zones peintes.

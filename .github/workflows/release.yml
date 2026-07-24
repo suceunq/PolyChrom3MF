@@ -24,13 +24,13 @@ jobs:
         run: dotnet test PolyChrom3MF.sln -c Release
 
       - name: Publier l'application autonome
-        run: dotnet publish PolyChrom3MF.App/PolyChrom3MF.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/PolyChrom3MF_1.1
+        run: dotnet publish PolyChrom3MF.App/PolyChrom3MF.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/app
 
       - name: Installer Inno Setup
         run: choco install innosetup --no-progress -y
 
       - name: Construire l'installateur
-        run: iscc installer.iss
+        run: iscc /DAppPublishDir=publish/app installer.iss
 
       - name: Créer la Release GitHub
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

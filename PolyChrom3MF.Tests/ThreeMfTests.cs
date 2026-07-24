@@ -191,6 +191,34 @@ public class ThreeMfTests
     [Fact] public async Task Prepare_un_jpg_sur_un_thread_de_fond_sans_objet_wpf_partage() { var source = JpegWithBackground(); var output = await Task.Run(() => PatternService.PrepareImage(source, true, 35)); Assert.True(File.Exists(output)); PatternService.ValidateImage(output); }
     [Fact] public void Nettoie_les_notes_de_mise_a_jour_pour_la_fenetre() { var notes = WhatsNewWindow.NormalizeNotes("- Ajout important\n* Correction utile\n\n"); Assert.Equal(["Ajout important", "Correction utile"], notes); }
     [Fact] public void Projet_portable_embarque_le_png_du_motif() { var source = Sample(); var document = new ThreeMfService().Read(source); var proposals = new PaletteService().Create(document); var png = Png(); var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); new ProjectService().Save(path, document, proposals, 0, 1, 2, 3, pattern: new PatternSettings(png, PatternMode.Repeated, 75, DisplayName: "motif-test.png")); File.Delete(png); var loaded = new ProjectService().Load(path); Assert.NotNull(loaded.Pattern); Assert.True(File.Exists(loaded.Pattern!.ImagePath)); Assert.Equal(PatternMode.Repeated, loaded.Pattern.Mode); Assert.Equal("motif-test.png", loaded.Pattern.DisplayName); }
+    [Fact] public void Projet_portable_conserve_plusieurs_motifs_independants_par_objet()
+    {
+        var source = Sample(2);
+        var document = new ThreeMfService().Read(source);
+        var proposals = new PaletteService().Create(document);
+        var firstImage = Png();
+        var secondImage = Png();
+        var first = new PatternSettings(firstImage, PatternMode.Front, TargetObject: 0, DisplayName: "logo-gauche.png");
+        var second = new PatternSettings(secondImage, PatternMode.Triplanar, TargetObject: 1, DisplayName: "logo-droite.png");
+        var groups = proposals.Select(_ => (IReadOnlyList<ColorLayer>)[
+            new LayerService().Create("Logo gauche", ColorLayerKind.Image) with { Pattern = first },
+            new LayerService().Create("Logo droite", ColorLayerKind.Image) with { Pattern = second }
+        ]).ToList();
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf");
+        new ProjectService().Save(path, document, proposals, 0, 0, 0, 1, pattern: second, layers: groups, layerBases: proposals);
+        File.Delete(firstImage);
+        File.Delete(secondImage);
+
+        var loaded = new ProjectService().Load(path);
+        ProjectService.ValidateForDocument(loaded, document);
+        var patterns = loaded.Layers![0].Select(layer => layer.Pattern).Where(value => value is not null).Select(value => value!).ToList();
+        Assert.Equal(2, patterns.Count);
+        Assert.Equal([0, 1], patterns.Select(value => value.TargetObject).ToArray());
+        Assert.Equal(2, patterns.Select(value => value.ImagePath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(patterns, value => Assert.True(File.Exists(value.ImagePath)));
+        using var archive = ZipFile.OpenRead(path);
+        Assert.Equal(2, archive.Entries.Count(entry => entry.FullName.StartsWith("pattern/", StringComparison.Ordinal)));
+    }
     [Fact] public void Motif_png_est_exporte_dans_un_3mf_valide() { var source = Sample(4); var service = new ThreeMfService(); var document = service.Read(source); var proposal = new PaletteService().Create(document)[0]; new PatternService().Apply(document, proposal, new PatternSettings(Png(), PatternMode.Cylindrical)); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, proposal, output); var reopened = service.Read(output); Assert.Equal(document.TriangleCount, reopened.TriangleCount); Assert.True(reopened.ExistingColorCount >= 1); }
     [Fact] public void Refuse_un_motif_ciblant_un_objet_absent() { var document = FunDocument(); var proposal = new PaletteService().Create(document)[0]; Assert.Throws<InvalidDataException>(() => new PatternService().Apply(document, proposal, new PatternSettings(Png(), TargetObject: 999))); }
     [Fact] public void Refuse_un_nom_de_motif_demesure() { Assert.Throws<InvalidDataException>(() => PatternService.ValidateSettings(new PatternSettings("motif.png", DisplayName: new string('x', 261)))); }

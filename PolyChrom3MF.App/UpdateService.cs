@@ -11,15 +11,13 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
-        "Subdivision locale adaptative sous les logos, textes, motifs et zones peintes.\n" +
-        "Calques non destructifs avec visibilité, verrouillage, ordre, duplication, fusion, texte et effets.\n" +
-        "Sélections intelligentes : îlot, angle, couleur, caméra, pièce, rectangle, lasso et détection sémantique.\n" +
-        "Assistant multicolore avec détection des profils de slicer, correspondance des filaments et estimation des changements.\n" +
-        "Aperçu 3D solide avec LOD automatique pour les modèles de plusieurs millions de triangles.\n" +
-        "Galerie de styles .polystyle, calques texte/effets et mode débutant.\n" +
-        "Manipulation directe des motifs dans la vue 3D, copies, miroir et redimensionnement libre.\n" +
-        "Recentrage automatique après import, coloration et application d’un motif ou logo.\n" +
-        "Import, mémoire, export et stabilité renforcés, sans rendu pointillé ni translucide.";
+        "Plusieurs motifs PNG/JPG indépendants peuvent maintenant coexister sur des objets différents.\n" +
+        "Chaque motif conserve sa cible, son image, son calque et ses réglages de transformation.\n" +
+        "Transformer ou retirer le calque actif ne modifie plus les autres motifs.\n" +
+        "Les projets .poly3mf embarquent et restaurent séparément toutes les images utilisées.\n" +
+        "L’objet sélectionné est clairement nommé et surligné dans la vue 3D.\n" +
+        "Le prochain motif cible automatiquement l’objet actuellement sélectionné.\n" +
+        "Correction du workflow GitHub de création automatique de l’installateur Windows.";
 
     const string LatestReleaseApi = "https://api.github.com/repos/suceunq/PolyChrom3MF/releases/latest";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";

@@ -1,6 +1,10 @@
+#ifndef AppPublishDir
+  #define AppPublishDir "publish\PolyChrom3MF_2.0.2"
+#endif
+
 [Setup]
 AppName=PolyChrom 3MF
-AppVersion=2.0.1
+AppVersion=2.0.2
 AppPublisher=bob59
 DefaultDirName={localappdata}\Programs\PolyChrom 3MF
 DefaultGroupName=PolyChrom 3MF
@@ -24,7 +28,7 @@ Name: "french"; MessagesFile: "compiler:Languages\\French.isl"
 Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; GroupDescription: "Raccourcis :"
 
 [Files]
-Source: "publish\\PolyChrom3MF_2.0.1\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#AppPublishDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\\PolyChrom 3MF"; Filename: "{app}\\PolyChrom3MF.exe"

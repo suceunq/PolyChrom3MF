@@ -48,6 +48,9 @@
             <TextBlock x:Name="FileText" Margin="0,12,0,4" Text="Aucun fichier chargé" TextWrapping="Wrap"/>
             <TextBlock x:Name="InfoText" Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap"/>
             <Separator Margin="0,16,0,12"/><TextBlock Text="OBJETS ET VOLUMES" FontWeight="Bold"/>
+            <Border Background="#263C56" BorderBrush="#4FA3FF" BorderThickness="1" CornerRadius="5" Padding="7" Margin="0,8,0,0">
+              <TextBlock x:Name="SelectedObjectText" Text="Aucun objet sélectionné" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#EAF4FF"/>
+            </Border>
             <ListBox x:Name="ObjectsList" Margin="0,8,0,0" Height="350" SelectionChanged="ObjectsList_SelectionChanged"/>
           </StackPanel>
         </DockPanel>

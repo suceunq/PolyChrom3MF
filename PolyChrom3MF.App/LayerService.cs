@@ -49,7 +49,12 @@ public sealed class LayerService
             if (layer.Id == Guid.Empty || !ids.Add(layer.Id) || layer.Name != SafeName(layer.Name) ||
                 !Enum.IsDefined(layer.Kind) || !double.IsFinite(layer.PreviewOpacity) || layer.PreviewOpacity is < 0 or > 1)
                 throw new InvalidDataException("Un calque contient des paramètres invalides.");
-            if (layer.Pattern is not null) PatternService.ValidateSettings(layer.Pattern);
+            if (layer.Pattern is not null)
+            {
+                PatternService.ValidateSettings(layer.Pattern);
+                if (layer.Pattern.TargetObject >= 0 && !objects.ContainsKey(layer.Pattern.TargetObject))
+                    throw new InvalidDataException("Un calque de motif cible un objet absent du modèle.");
+            }
             foreach (var pair in layer.TriangleOverrides)
             {
                 if (!objects.TryGetValue(pair.Key, out var obj) || pair.Value.Length != obj.Triangles.Count ||
