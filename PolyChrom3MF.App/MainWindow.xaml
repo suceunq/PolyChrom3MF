@@ -126,7 +126,7 @@
               <TextBlock Text="COLORATION MANUELLE" FontWeight="Bold"/>
               <CheckBox x:Name="PaintMode" Content="Sélectionner des zones sur le modèle" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed" Margin="0,7,0,5"/>
               <TextBlock Text="Outil" FontSize="12" Margin="0,2,0,3"/>
-              <ComboBox x:Name="PaintTool" SelectedIndex="0" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Face par face (clic)"/><ComboBoxItem Content="Pinceau fluide (cliquer-glisser)"/></ComboBox>
+              <ComboBox x:Name="PaintTool" SelectedIndex="0" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Face par face (clic)"/><ComboBoxItem Content="Pinceau fluide (cliquer-glisser)"/><ComboBoxItem Content="Rectangle de sélection"/><ComboBoxItem Content="Lasso libre"/></ComboBox>
               <TextBlock Text="Taille du pinceau" FontSize="12" Margin="0,2,0,3"/>
               <ComboBox x:Name="PaintBrushSize" SelectedIndex="1" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Très fin — 8 px"/><ComboBoxItem Content="Fin — 16 px"/><ComboBoxItem Content="Moyen — 28 px"/><ComboBoxItem Content="Large — 44 px"/><ComboBoxItem Content="Très large — 64 px"/></ComboBox>
               <TextBlock Text="Couleur à appliquer" FontSize="12" Margin="0,2,0,3"/><ComboBox x:Name="PaintColorCombo" DisplayMemberPath="Label" SelectedIndex="0" Margin="0,0,0,5"/>
@@ -136,7 +136,9 @@
                 <Button Tag="angle" Click="SmartSelect_Click" Content="Faces similaires"/>
                 <Button Tag="color" Click="SmartSelect_Click" Content="Même couleur"/>
                 <Button Tag="camera" Click="SmartSelect_Click" Content="Face caméra"/>
+                <Button Tag="object" Click="SmartSelect_Click" Content="Pièce complète"/>
               </WrapPanel>
+              <DockPanel Margin="0,4,0,5"><Button DockPanel.Dock="Right" Click="SemanticSelect_Click" Content="Détecter"/><ComboBox x:Name="SemanticRegionCombo" SelectedIndex="0" Margin="0,0,5,0"><ComboBoxItem Content="Yeux"/><ComboBoxItem Content="Cheveux"/><ComboBoxItem Content="Vêtements"/><ComboBoxItem Content="Peau"/><ComboBoxItem Content="Accessoires"/><ComboBoxItem Content="Socle"/><ComboBoxItem Content="Armes"/></ComboBox></DockPanel>
               <TextBlock x:Name="PaintSelectionText" Text="0 triangle sélectionné" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,0,0,5"/>
               <WrapPanel><Button Click="ApplyPaintSelection_Click" Content="Appliquer la couleur"/><Button Click="ClearPaintSelection_Click" Content="Effacer"/></WrapPanel>
             </StackPanel>

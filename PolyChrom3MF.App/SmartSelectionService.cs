@@ -5,6 +5,56 @@ namespace PolyChrom3MF.App;
 
 public sealed class SmartSelectionService
 {
+    public Dictionary<int, HashSet<int>> SemanticRegion(ModelDocument document, string region)
+    {
+        region = (region ?? "").Trim().ToLowerInvariant();
+        var keywords = region switch
+        {
+            "yeux" => new[] { "eye", "eyes", "oeil", "yeux", "iris", "pupil" },
+            "cheveux" => new[] { "hair", "cheveu", "cheveux", "coiff" },
+            "vêtements" => new[] { "cloth", "shirt", "coat", "dress", "pant", "robe", "veste", "habit" },
+            "peau" => new[] { "skin", "body", "face", "head", "peau", "visage", "tete" },
+            "accessoires" => new[] { "access", "bag", "belt", "hat", "cap", "bijou", "sac", "ceinture" },
+            "socle" => new[] { "base", "stand", "socle", "plate" },
+            "armes" => new[] { "weapon", "sword", "gun", "rifle", "knife", "arme", "epee", "fusil" },
+            _ => Array.Empty<string>()
+        };
+        var named = document.Objects.Where(obj => keywords.Any(keyword =>
+            (obj.Id + " " + obj.PartPath).Contains(keyword, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (named.Count > 0) return named.ToDictionary(obj => obj.Index, obj => Enumerable.Range(0, obj.Triangles.Count).ToHashSet());
+
+        var all = document.Objects.SelectMany(obj => obj.Vertices).ToArray();
+        if (all.Length == 0) return [];
+        var minZ = all.Min(v => v.Z); var maxZ = all.Max(v => v.Z); var height = Math.Max(1e-9, maxZ - minZ);
+        var minX = all.Min(v => v.X); var maxX = all.Max(v => v.X); var width = Math.Max(1e-9, maxX - minX);
+        var result = new Dictionary<int, HashSet<int>>();
+        foreach (var obj in document.Objects)
+        {
+            var selected = new HashSet<int>();
+            for (var index = 0; index < obj.Triangles.Count; index++)
+            {
+                var triangle = obj.Triangles[index];
+                var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
+                var x = ((a.X + b.X + c.X) / 3 - minX) / width;
+                var z = ((a.Z + b.Z + c.Z) / 3 - minZ) / height;
+                var match = region switch
+                {
+                    "socle" => z <= .12,
+                    "cheveux" => z >= .78,
+                    "yeux" => z is >= .62 and <= .82 && Math.Abs(x - .5) is >= .04 and <= .24,
+                    "vêtements" => z is >= .22 and <= .68,
+                    "peau" => z is >= .58 and <= .86,
+                    "accessoires" => (x <= .16 || x >= .84) && z >= .25,
+                    "armes" => (x <= .12 || x >= .88) && z >= .38,
+                    _ => false
+                };
+                if (match) selected.Add(index);
+            }
+            if (selected.Count > 0) result[obj.Index] = selected;
+        }
+        return result;
+    }
+
     public HashSet<int> ConnectedIsland(ModelObject obj, int seed, CancellationToken cancellationToken = default)
     {
         ValidateSeed(obj, seed);

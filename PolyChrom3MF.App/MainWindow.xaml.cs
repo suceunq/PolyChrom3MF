@@ -780,6 +780,7 @@ public partial class MainWindow : Window
         }
         var selectedColorIndex = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1);
         var cameraLookDirection = (Viewer.Camera as ProjectionCamera)?.LookDirection;
+        var selectedObjectIndex = ObjectsList.SelectedItem is ModelObject selectedObject ? selectedObject.Index : _lastSelectionObject;
         SetBusy(true, "Analyse intelligente des surfaces…");
         try
         {
@@ -796,6 +797,11 @@ public partial class MainWindow : Window
                 else if (action == "color")
                 {
                     foreach (var obj in _doc.Objects) result[obj.Index] = _smartSelection.ByColor(obj, _selected, selectedColorIndex);
+                }
+                else if (action == "object")
+                {
+                    var obj = _doc.Objects.FirstOrDefault(item => item.Index == selectedObjectIndex) ?? _doc.Objects[0];
+                    result[obj.Index] = Enumerable.Range(0, obj.Triangles.Count).ToHashSet();
                 }
                 else if (cameraLookDirection is Vector3D lookDirection)
                 {
@@ -816,6 +822,28 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(ex.Message, "Sélection intelligente impossible", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+        finally { SetBusy(false); }
+    }
+
+    async void SemanticSelect_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || SemanticRegionCombo.SelectedItem is not ComboBoxItem item) return;
+        var region = item.Content?.ToString() ?? "";
+        SetBusy(true, $"Détection automatique : {region.ToLowerInvariant()}…");
+        try
+        {
+            var additions = await Task.Run(() => _smartSelection.SemanticRegion(_doc, region));
+            foreach (var pair in additions)
+            {
+                if (!_paintSelection.TryGetValue(pair.Key, out var current)) _paintSelection[pair.Key] = current = [];
+                current.UnionWith(pair.Value);
+            }
+            UpdatePaintSelectionText(); Render();
+            StatusText.Text = additions.Count == 0
+                ? $"Aucune zone « {region} » détectée automatiquement."
+                : $"{region} détecté(s) · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés. Vérifiez puis appliquez.";
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Détection automatique", MessageBoxButton.OK, MessageBoxImage.Warning); }
         finally { SetBusy(false); }
     }
     void UpdatePaintSelectionText() { if (PaintSelectionText is null) return; var count = _paintSelection.Values.Sum(set => set.Count); PaintSelectionText.Text = $"{count:N0} triangle{(count > 1 ? "s" : "")} sélectionné{(count > 1 ? "s" : "")}"; }
@@ -1169,14 +1197,14 @@ public partial class MainWindow : Window
         _last = e.GetPosition(Viewer);
         if (PaintMode.IsChecked == true && e.ChangedButton == MouseButton.Left)
         {
-            if (PaintTool.SelectedIndex == 1)
+            if (PaintTool.SelectedIndex >= 1)
             {
                 Viewer.CaptureMouse();
                 _paintStroke = true;
                 _paintStrokePoints.Clear();
                 _paintStrokePoints.Add(_last);
                 PaintStrokePreview.Points = new PointCollection([_last]);
-                PaintStrokePreview.StrokeThickness = BrushRadiusPixels() * 2;
+                PaintStrokePreview.StrokeThickness = PaintTool.SelectedIndex == 1 ? BrushRadiusPixels() * 2 : 2;
                 PaintStrokePreview.Visibility = Visibility.Visible;
             }
             else await SelectPaintFromView(_last);
@@ -1195,6 +1223,15 @@ public partial class MainWindow : Window
         var paintMode = PaintMode.IsChecked == true;
         if (paintMode && _paintStroke && e.LeftButton == MouseButtonState.Pressed)
         {
+            if (PaintTool.SelectedIndex == 2)
+            {
+                PaintStrokePreview.Points = new PointCollection([
+                    _paintStrokePoints[0], new(p.X, _paintStrokePoints[0].Y), p,
+                    new(_paintStrokePoints[0].X, p.Y), _paintStrokePoints[0]
+                ]);
+                _last = p;
+                return;
+            }
             var dx = p.X - _last.X;
             var dy = p.Y - _last.Y;
             if (dx * dx + dy * dy >= 2.25)
@@ -1227,7 +1264,9 @@ public partial class MainWindow : Window
         {
             _paintStroke = false;
             Viewer.ReleaseMouseCapture();
-            var points = _paintStrokePoints.ToArray();
+            var points = PaintTool.SelectedIndex == 2
+                ? new[] { _paintStrokePoints[0], e.GetPosition(Viewer) }
+                : _paintStrokePoints.ToArray();
             _paintStrokePoints.Clear();
             if (points.Length > 0 && _doc is not null && CapturePaintProjection() is { } projection)
             {
@@ -1237,7 +1276,10 @@ public partial class MainWindow : Window
                 SetBusy(true, "Application du trait de pinceau…");
                 try
                 {
-                    var selection = await Task.Run(() => SelectTrianglesFromScreenStroke(document, points, brushRadius, projection));
+                    var tool = PaintTool.SelectedIndex;
+                    var selection = await Task.Run(() => tool == 1
+                        ? SelectTrianglesFromScreenStroke(document, points, brushRadius, projection)
+                        : SelectTrianglesFromScreenRegion(document, points, tool == 2, projection));
                     foreach (var pair in selection)
                     {
                         if (!_paintSelection.TryGetValue(pair.Key, out var current)) _paintSelection[pair.Key] = current = [];
@@ -1247,7 +1289,7 @@ public partial class MainWindow : Window
                     Render();
                     StatusText.Text = selection.Count == 0
                         ? "Le trait n’a rencontré aucune surface visible."
-                        : $"Trait terminé · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
+                        : $"Sélection terminée · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
                 }
                 catch (Exception ex)
                 {
@@ -1438,6 +1480,67 @@ public partial class MainWindow : Window
             triangles.Add(candidate.TriangleIndex);
         }
         return result;
+    }
+
+    internal static Dictionary<int, HashSet<int>> SelectTrianglesFromScreenRegion(
+        ModelDocument document,
+        IReadOnlyList<System.Windows.Point> points,
+        bool rectangle,
+        PaintProjection projection)
+    {
+        var result = new Dictionary<int, HashSet<int>>();
+        if (points.Count < 2 || projection.Width <= 0 || projection.Height <= 0) return result;
+        IReadOnlyList<System.Windows.Point> polygon = rectangle
+            ? new[]
+            {
+                points[0], new System.Windows.Point(points[^1].X, points[0].Y), points[^1],
+                new System.Windows.Point(points[0].X, points[^1].Y)
+            }
+            : points;
+        if (polygon.Count < 3) return result;
+
+        var candidates = new List<(int Object, int Triangle, System.Windows.Point Screen, double Depth)>();
+        const int cellSize = 3;
+        var gridWidth = Math.Max(1, (int)Math.Ceiling(projection.Width / cellSize));
+        var gridHeight = Math.Max(1, (int)Math.Ceiling(projection.Height / cellSize));
+        var nearestDepth = Enumerable.Repeat(double.PositiveInfinity, gridWidth * gridHeight).ToArray();
+        foreach (var obj in document.Objects)
+            for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
+            {
+                var triangle = obj.Triangles[triangleIndex];
+                var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
+                var center = new Point3D((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
+                if (!TryProjectPoint(center, projection, out var screen, out var depth) || !PointInPolygon(screen, polygon)) continue;
+                var x = (int)(screen.X / cellSize); var y = (int)(screen.Y / cellSize);
+                if ((uint)x >= (uint)gridWidth || (uint)y >= (uint)gridHeight) continue;
+                var cell = y * gridWidth + x;
+                nearestDepth[cell] = Math.Min(nearestDepth[cell], depth);
+                candidates.Add((obj.Index, triangleIndex, screen, depth));
+            }
+        foreach (var candidate in candidates)
+        {
+            var x = (int)(candidate.Screen.X / cellSize); var y = (int)(candidate.Screen.Y / cellSize);
+            var cell = y * gridWidth + x;
+            var tolerance = Math.Max(.001, nearestDepth[cell] * .006);
+            if (candidate.Depth > nearestDepth[cell] + tolerance) continue;
+            if (!result.TryGetValue(candidate.Object, out var triangles)) result[candidate.Object] = triangles = [];
+            triangles.Add(candidate.Triangle);
+        }
+        return result;
+    }
+
+    internal static bool PointInPolygon(System.Windows.Point point, IReadOnlyList<System.Windows.Point> polygon)
+    {
+        var inside = false;
+        for (var i = 0; i < polygon.Count; i++)
+        {
+            var j = i == 0 ? polygon.Count - 1 : i - 1;
+            var a = polygon[i]; var b = polygon[j];
+            if ((a.Y > point.Y) != (b.Y > point.Y) &&
+                point.X < (b.X - a.X) * (point.Y - a.Y) / (b.Y - a.Y) + a.X)
+                inside = !inside;
+        }
+        return inside;
     }
 
     internal static bool TryProjectPoint(Point3D point, PaintProjection projection, out System.Windows.Point screen, out double depth)
