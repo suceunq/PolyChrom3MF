@@ -188,6 +188,28 @@ public class ThreeMfTests
     [Fact] public void Pinceau_projette_le_centre_de_la_vue() { var projection = new MainWindow.PaintProjection(new(0, -10, 0), new(0, 1, 0), new(0, 0, 1), new(1, 0, 0), true, 60, 800, 600); Assert.True(MainWindow.TryProjectPoint(new(0, 0, 0), projection, out var screen, out _)); Assert.Equal(400, screen.X, 6); Assert.Equal(300, screen.Y, 6); }
     [Fact] public void Pinceau_ne_traverse_pas_la_surface_visible() { var vertices = new List<Vertex> { new(-1, 0, -1), new(1, 0, -1), new(0, 0, 1), new(-1, 2, -1), new(1, 2, -1), new(0, 2, 1) }; var obj = new ModelObject(0, "1", vertices, [new(0, 1, 2), new(3, 4, 5)], "3D/3dmodel.model"); var document = new ModelDocument("", new System.Xml.Linq.XDocument(), "", [obj], 2, 2, 2, [], 2, null, "millimeter", 0, 0, "3MF"); var projection = new MainWindow.PaintProjection(new(0, -10, 0), new(0, 1, 0), new(0, 0, 1), new(1, 0, 0), true, 60, 800, 600); var selected = MainWindow.SelectTrianglesFromScreenStroke(document, [new(400, 316)], 20, projection); Assert.Contains(0, selected[0]); Assert.DoesNotContain(1, selected[0]); }
     [Fact] public void Apercu_adaptatif_conserve_un_maillage_valide_et_les_indices_source() { var original = FunDocument().Objects[0]; var source = original with { Triangles = Enumerable.Range(0, 5).SelectMany(_ => original.Triangles).ToList() }; var preview = MainWindow.SimplifyForPreview(source, 200); Assert.NotEmpty(preview.Triangles); Assert.True(preview.Triangles.Count < source.Triangles.Count); Assert.All(preview.Triangles, triangle => { Assert.InRange(triangle.A, 0, preview.Vertices.Count - 1); Assert.InRange(triangle.B, 0, preview.Vertices.Count - 1); Assert.InRange(triangle.C, 0, preview.Vertices.Count - 1); Assert.InRange(triangle.SourceIndex, 0, source.Triangles.Count - 1); }); }
+    [Fact] public void Subdivision_locale_est_non_destructive_et_conforme()
+    {
+        var source = new ModelObject(0, "1", [new(0, 0, 0), new(1, 0, 0), new(1, 1, 0), new(0, 1, 0)], [new(0, 1, 2), new(0, 2, 3)], "3D/3dmodel.model");
+        var result = new AdaptiveSubdivisionService().Subdivide(source, new HashSet<int> { 0 });
+        Assert.Equal(2, source.Triangles.Count);
+        Assert.Equal(4, source.Vertices.Count);
+        Assert.Equal(6, result.Object.Triangles.Count);
+        Assert.Equal(7, result.Object.Vertices.Count);
+        Assert.Equal(4, result.SourceTriangles.Count(parent => parent == 0));
+        Assert.Equal(2, result.SourceTriangles.Count(parent => parent == 1));
+        Assert.All(result.Object.Triangles, triangle => { Assert.InRange(triangle.A, 0, 6); Assert.InRange(triangle.B, 0, 6); Assert.InRange(triangle.C, 0, 6); });
+    }
+    [Fact] public void Subdivision_locale_preserve_surface_et_dimensions()
+    {
+        var source = new ModelObject(0, "1", [new(0, 0, 0), new(2, 0, 0), new(0, 2, 0)], [new(0, 1, 2)], "3D/3dmodel.model");
+        var result = new AdaptiveSubdivisionService().Subdivide(source, new HashSet<int> { 0 }, 2);
+        Assert.Equal(16, result.Object.Triangles.Count);
+        Assert.Equal(source.Vertices.Min(v => v.X), result.Object.Vertices.Min(v => v.X));
+        Assert.Equal(source.Vertices.Max(v => v.X), result.Object.Vertices.Max(v => v.X));
+        Assert.Equal(source.Vertices.Min(v => v.Y), result.Object.Vertices.Min(v => v.Y));
+        Assert.Equal(source.Vertices.Max(v => v.Y), result.Object.Vertices.Max(v => v.Y));
+    }
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }
     [Fact] public void Convertit_stl_en_3mf_valide() { var d = new StlService().Read(AsciiStl()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); new ThreeMfService().Export(d, new PaletteService().Create(1)[0], output); Assert.Equal(1, new ThreeMfService().Read(output).TriangleCount); }
