@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     readonly SlicerDetectionService _slicerDetection = new();
     readonly UpdateService _updateService = new();
     readonly StyleLibraryService _styleLibrary = new();
+    readonly TextPatternService _textPatterns = new();
     readonly GpuViewportHost _gpuViewport;
     readonly System.Windows.Threading.DispatcherTimer _layerPreviewTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
@@ -698,6 +699,49 @@ public partial class MainWindow : Window
             RecomposeSelected(); RefreshLayers(); _dirty = true;
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Fusion impossible", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
+
+    async void TextLayer_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _selected is null) return;
+        var text = PromptText("Ajouter un calque de texte", "Texte à projeter", "PolyChrom");
+        if (string.IsNullOrWhiteSpace(text)) return;
+        try
+        {
+            var image = _textPatterns.Render(text);
+            var color = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1);
+            var settings = new PatternSettings(image, PatternMode.Front, 100, FourVariants: false, DisplayName: text,
+                MonochromeLogo: true, LogoColorIndex: color, RepeatAcrossModel: false);
+            var style = new PolyStyleData($"Texte {text}", "Calque de texte projeté", _selected.Colors.Select(item => item.Hex).ToList(),
+                settings, [ColorLayerKind.Text], _settings.PrinterName, _settings.MaterialSlots, DateTimeOffset.UtcNow);
+            await ApplyStyle(style);
+            var proposal = SelectedProposalIndex();
+            var imageLayer = _proposalLayers[proposal].FindIndex(layer => layer.Kind == ColorLayerKind.Image);
+            if (imageLayer >= 0) _proposalLayers[proposal][imageLayer] = _proposalLayers[proposal][imageLayer] with { Name = $"Texte : {text}", Kind = ColorLayerKind.Text };
+            RefreshLayers();
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Texte impossible à ajouter", MessageBoxButton.OK, MessageBoxImage.Error); }
+    }
+
+    void EffectLayer_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _selected is null) return;
+        PushUndo(); var proposal = SelectedProposalIndex();
+        var layer = _layerService.Create("Effet dégradé vertical", ColorLayerKind.Effect);
+        var minZ = _doc.Objects.SelectMany(obj => obj.Vertices).Min(vertex => vertex.Z);
+        var height = Math.Max(.000001, _doc.SizeZ);
+        foreach (var obj in _doc.Objects)
+        {
+            var overrides = new int[obj.Triangles.Count];
+            for (var index = 0; index < obj.Triangles.Count; index++)
+            {
+                var triangle = obj.Triangles[index];
+                var z = (obj.Vertices[triangle.A].Z + obj.Vertices[triangle.B].Z + obj.Vertices[triangle.C].Z) / 3;
+                overrides[index] = Math.Clamp((int)(((z - minZ) / height) * _selected.Colors.Count), 0, _selected.Colors.Count - 1);
+            }
+            layer.TriangleOverrides[obj.Index] = overrides;
+        }
+        _proposalLayers[proposal].Add(layer); RecomposeSelected(); RefreshLayers(); _dirty = true;
     }
 
     void DeleteLayer_Click(object sender, RoutedEventArgs e)

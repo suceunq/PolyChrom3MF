@@ -128,6 +128,8 @@
                 <Button Click="DuplicateLayer_Click" Content="Dupliquer"/>
                 <Button Click="RenameLayer_Click" Content="Renommer"/>
                 <Button Click="MergeLayer_Click" Content="Fusionner"/>
+                <Button Click="TextLayer_Click" Content="Texte…"/>
+                <Button Click="EffectLayer_Click" Content="Effet"/>
                 <Button Click="DeleteLayer_Click" Content="Supprimer"/>
                 <Button Click="MoveLayerUp_Click" Content="Monter"/>
                 <Button Click="MoveLayerDown_Click" Content="Descendre"/>
