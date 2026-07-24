@@ -113,6 +113,13 @@
               <TextBlock Text="Taille du pinceau" FontSize="12" Margin="0,2,0,3"/>
               <ComboBox x:Name="PaintBrushSize" SelectedIndex="1" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Très fin — 8 px"/><ComboBoxItem Content="Fin — 16 px"/><ComboBoxItem Content="Moyen — 28 px"/><ComboBoxItem Content="Large — 44 px"/><ComboBoxItem Content="Très large — 64 px"/></ComboBox>
               <TextBlock Text="Couleur à appliquer" FontSize="12" Margin="0,2,0,3"/><ComboBox x:Name="PaintColorCombo" DisplayMemberPath="Label" SelectedIndex="0" Margin="0,0,0,5"/>
+              <TextBlock Text="Sélection intelligente" FontSize="12" FontWeight="SemiBold" Margin="0,4,0,3"/>
+              <WrapPanel>
+                <Button Tag="island" Click="SmartSelect_Click" Content="Îlot"/>
+                <Button Tag="angle" Click="SmartSelect_Click" Content="Faces similaires"/>
+                <Button Tag="color" Click="SmartSelect_Click" Content="Même couleur"/>
+                <Button Tag="camera" Click="SmartSelect_Click" Content="Face caméra"/>
+              </WrapPanel>
               <TextBlock x:Name="PaintSelectionText" Text="0 triangle sélectionné" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,0,0,5"/>
               <WrapPanel><Button Click="ApplyPaintSelection_Click" Content="Appliquer la couleur"/><Button Click="ClearPaintSelection_Click" Content="Effacer"/></WrapPanel>
             </StackPanel>

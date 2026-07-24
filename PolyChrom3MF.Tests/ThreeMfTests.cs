@@ -210,6 +210,59 @@ public class ThreeMfTests
         Assert.Equal(source.Vertices.Min(v => v.Y), result.Object.Vertices.Min(v => v.Y));
         Assert.Equal(source.Vertices.Max(v => v.Y), result.Object.Vertices.Max(v => v.Y));
     }
+    [Fact] public void Calques_composent_sans_modifier_la_proposition_source()
+    {
+        var document = FunDocument();
+        var basis = new PaletteService().Create(document, colorCount: 4)[0];
+        var original = (int[])basis.TriangleAssignments[0].Clone();
+        var overrides = Enumerable.Repeat(-1, original.Length).ToArray();
+        overrides[10] = 3;
+        var layer = new LayerService().Create("Logo", ColorLayerKind.MonochromeLogo) with { TriangleOverrides = new Dictionary<int, int[]> { [0] = overrides } };
+        var composed = new LayerService().Compose(document, basis, [layer]);
+        Assert.Equal(3, composed.TriangleAssignments[0][10]);
+        Assert.Equal(original, basis.TriangleAssignments[0]);
+    }
+    [Fact] public void Calque_masque_retablit_le_resultat_sans_perte()
+    {
+        var document = FunDocument();
+        var basis = new PaletteService().Create(document)[0];
+        var overrides = Enumerable.Repeat(-1, document.Objects[0].Triangles.Count).ToArray();
+        overrides[0] = 2;
+        var layer = new LayerService().Create("Peinture", ColorLayerKind.Paint) with { TriangleOverrides = new Dictionary<int, int[]> { [0] = overrides } };
+        var visible = new LayerService().Compose(document, basis, [layer]);
+        var hidden = new LayerService().Compose(document, basis, [layer with { IsVisible = false }]);
+        Assert.Equal(2, visible.TriangleAssignments[0][0]);
+        Assert.Equal(basis.TriangleAssignments[0][0], hidden.TriangleAssignments[0][0]);
+    }
+    [Fact] public void Fusion_de_calques_respecte_l_ordre_superieur()
+    {
+        var service = new LayerService();
+        var lower = service.Create("Fond", ColorLayerKind.Paint) with { TriangleOverrides = new Dictionary<int, int[]> { [0] = [1, 1, -1] } };
+        var upper = service.Create("Logo", ColorLayerKind.Image) with { TriangleOverrides = new Dictionary<int, int[]> { [0] = [-1, 3, 2] } };
+        var merged = service.Merge(lower, upper);
+        Assert.Equal([1, 3, 2], merged.TriangleOverrides[0]);
+    }
+    [Fact] public void Selection_intelligente_separe_les_ilots_geometriques()
+    {
+        var obj = new ModelObject(0, "1",
+            [new(0, 0, 0), new(1, 0, 0), new(1, 1, 0), new(0, 1, 0), new(5, 0, 0), new(6, 0, 0), new(5, 1, 0)],
+            [new(0, 1, 2), new(0, 2, 3), new(4, 5, 6)], "3D/3dmodel.model");
+        Assert.Equal([0, 1], new SmartSelectionService().ConnectedIsland(obj, 0).Order().ToArray());
+        Assert.Equal([2], new SmartSelectionService().ConnectedIsland(obj, 2).ToArray());
+    }
+    [Fact] public void Selection_intelligente_filtre_par_angle_et_couleur()
+    {
+        var obj = new ModelObject(0, "1",
+            [new(0, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, 0, 1)],
+            [new(0, 1, 2), new(0, 3, 1)], "3D/3dmodel.model");
+        var proposal = new ColorProposal("p", "d", [new("A", "#000000"), new("B", "#FFFFFF")], new Dictionary<int, int> { [0] = 0 })
+        {
+            TriangleAssignments = new Dictionary<int, int[]> { [0] = [0, 1] }
+        };
+        var service = new SmartSelectionService();
+        Assert.Equal([0], service.SimilarFaces(obj, 0, 20, false).ToArray());
+        Assert.Equal([1], service.ByColor(obj, proposal, 1).ToArray());
+    }
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }
     [Fact] public void Convertit_stl_en_3mf_valide() { var d = new StlService().Read(AsciiStl()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); new ThreeMfService().Export(d, new PaletteService().Create(1)[0], output); Assert.Equal(1, new ThreeMfService().Read(output).TriangleCount); }

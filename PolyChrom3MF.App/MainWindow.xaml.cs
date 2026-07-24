@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     readonly StlService _stlService = new();
     readonly PaletteService _palettes = new();
     readonly PatternService _patternService = new();
+    readonly SmartSelectionService _smartSelection = new();
     readonly ProjectService _projects = new();
     readonly SettingsService _settingsService = new();
     readonly SlicerDetectionService _slicerDetection = new();
@@ -48,6 +49,7 @@ public partial class MainWindow : Window
     double _yaw = -40, _pitch = -25, _zoom = 1;
     bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _shutdownForUpdate;
     int _generation, _colorCount = 4;
+    int _lastSelectionObject = -1, _lastSelectionTriangle = -1;
     string? _lastSlicerFile;
     Point3D _center, _modelCenter;
     double _radius = 100, _modelMinZ;
@@ -488,6 +490,8 @@ public partial class MainWindow : Window
         var obj = _doc.Objects.FirstOrDefault(item => item.Index == objectIndex); if (obj is null) return;
         var sourceTriangle = FindSourceTriangle(obj, hit);
         if (sourceTriangle < 0) return;
+        _lastSelectionObject = objectIndex;
+        _lastSelectionTriangle = sourceTriangle;
         var brushScale = PaintTool.SelectedIndex == 0 ? 0 : PaintBrushSize.SelectedIndex switch { 0 => .0015, 1 => .003, 2 => .008, 3 => .02, _ => .05 };
         SetBusy(true, "Sélection de la zone…");
         try
@@ -567,6 +571,55 @@ public partial class MainWindow : Window
     }
 
     void ClearPaintSelection_Click(object sender, RoutedEventArgs e) { _paintSelection.Clear(); UpdatePaintSelectionText(); Render(); StatusText.Text = "Sélection de zones effacée."; }
+
+    async void SmartSelect_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _selected is null || sender is not FrameworkElement { Tag: string action }) return;
+        if (action is "island" or "angle" && (_lastSelectionObject < 0 || _lastSelectionTriangle < 0))
+        {
+            MessageBox.Show("Cliquez d’abord sur une face du modèle pour définir le point de départ.", "Sélection intelligente");
+            return;
+        }
+        var selectedColorIndex = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1);
+        var cameraLookDirection = (Viewer.Camera as ProjectionCamera)?.LookDirection;
+        SetBusy(true, "Analyse intelligente des surfaces…");
+        try
+        {
+            var additions = await Task.Run(() =>
+            {
+                var result = new Dictionary<int, HashSet<int>>();
+                if (action is "island" or "angle")
+                {
+                    var obj = _doc.Objects.First(item => item.Index == _lastSelectionObject);
+                    result[obj.Index] = action == "island"
+                        ? _smartSelection.ConnectedIsland(obj, _lastSelectionTriangle)
+                        : _smartSelection.SimilarFaces(obj, _lastSelectionTriangle, 25, true);
+                }
+                else if (action == "color")
+                {
+                    foreach (var obj in _doc.Objects) result[obj.Index] = _smartSelection.ByColor(obj, _selected, selectedColorIndex);
+                }
+                else if (cameraLookDirection is Vector3D lookDirection)
+                {
+                    foreach (var obj in _doc.Objects) result[obj.Index] = _smartSelection.FacingCamera(obj, lookDirection);
+                }
+                return result;
+            });
+            foreach (var pair in additions)
+            {
+                if (!_paintSelection.TryGetValue(pair.Key, out var current)) _paintSelection[pair.Key] = current = [];
+                current.UnionWith(pair.Value);
+            }
+            UpdatePaintSelectionText();
+            Render();
+            StatusText.Text = $"Sélection intelligente terminée · {_paintSelection.Values.Sum(set => set.Count):N0} triangles.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Sélection intelligente impossible", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally { SetBusy(false); }
+    }
     void UpdatePaintSelectionText() { if (PaintSelectionText is null) return; var count = _paintSelection.Values.Sum(set => set.Count); PaintSelectionText.Text = $"{count:N0} triangle{(count > 1 ? "s" : "")} sélectionné{(count > 1 ? "s" : "")}"; }
 
     async void Export_Click(object sender, RoutedEventArgs e)
