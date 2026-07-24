@@ -141,9 +141,7 @@ public partial class MainWindow : Window
             GenerateProposals();
             HintText.Visibility = Visibility.Collapsed;
             StatsText.Text = $"{_doc.Objects.Count} objets · {_doc.TriangleCount:N0} triangles · {_selected?.Colors.Count ?? 0} couleurs";
-            ComputeBounds();
-            FitCamera();
-            Render();
+            RecenterView();
             _dirty = false;
             _undo.Clear(); _redo.Clear();
             StatusText.Text = _doc.Warning ?? "Analyse terminée.";
@@ -258,7 +256,7 @@ public partial class MainWindow : Window
         if (_doc is null) return;
         var index = SelectedProposalIndex();
         if (index < 0 || index >= _layerBases.Count || index >= _proposalLayers.Count) return;
-        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index], previewOpacity: true);
+        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index], previewOpacity: OpaquePreview?.IsChecked != true);
         _proposals[index] = Rename(composed, _selected!.Name, _selected.Description);
         _selected = _proposals[index];
         RefreshBindings();
@@ -500,7 +498,7 @@ public partial class MainWindow : Window
                 _layerService.Create("Couleur de base", ColorLayerKind.BaseColor),
                 CreateDifferenceLayer("Motif image", ColorLayerKind.Image, _layerBases[index], proposal, settings)
             }).ToList();
-            SelectProposal(selectedIndex); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true;
+            SelectProposal(selectedIndex); RefreshBindings(); RecenterView(); UpdatePatternText(); _dirty = true;
             StatusText.Text = geometry.AddedTriangles > 0
                 ? $"Motif haute précision · {geometry.AddedTriangles:N0} triangles ajoutés localement (niveau {geometry.Levels})."
                 : "Motif appliqué : le maillage est déjà assez détaillé.";
@@ -564,7 +562,7 @@ public partial class MainWindow : Window
         if (_beforePatternProposals is not null) _proposals = _beforePatternProposals.Select(Clone).ToList();
         else { _generation++; GenerateProposals(); }
         if (_beforePatternDocument is not null) _doc = _beforePatternDocument;
-        _pattern = null; _beforePatternProposals = null; _beforePatternDocument = null; ResetLayers(); SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif image retiré.";
+        _pattern = null; _beforePatternProposals = null; _beforePatternDocument = null; ResetLayers(); SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); RecenterView(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif image retiré.";
     }
 
     static ColorProposal Rename(ColorProposal proposal, string name, string description) => new(name, description, proposal.Colors.Select(color => new PaletteColor(color.Name, color.Hex)).ToList(), new Dictionary<int, int>(proposal.Assignments)) { TriangleAssignments = proposal.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
@@ -631,7 +629,7 @@ public partial class MainWindow : Window
                 if (imageLayerIndex >= 0) _proposalLayers[index][imageLayerIndex] = layer; else _proposalLayers[index].Add(layer);
                 _proposals[index] = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]);
             }
-            SelectProposal(selectedIndex); RefreshBindings(); RefreshLayers(); Render(); UpdatePatternText(); _dirty = true;
+            SelectProposal(selectedIndex); RefreshBindings(); RefreshLayers(); RecenterView(); UpdatePatternText(); _dirty = true;
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Transformation du motif", MessageBoxButton.OK, MessageBoxImage.Error); }
         finally { SetActivity(false); }
@@ -671,6 +669,7 @@ public partial class MainWindow : Window
         PushUndo();
         _proposalLayers[proposal].Add(layer.Duplicate(layer.Name + " copie"));
         RecomposeSelected();
+        RecenterView();
         RefreshLayers();
         _dirty = true;
     }
@@ -798,6 +797,14 @@ public partial class MainWindow : Window
         var index = _proposalLayers[proposal].FindIndex(item => item.Id == layer.Id);
         _proposalLayers[proposal][index] = layer with { PreviewOpacity = Math.Clamp(e.NewValue / 100d, 0, 1) };
         _layerPreviewTimer.Stop(); _layerPreviewTimer.Start(); _dirty = true;
+    }
+
+    void OpaquePreview_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingControls || _doc is null) return;
+        RecomposeSelected();
+        RecenterView();
+        _dirty = true;
     }
 
     async void PaintMode_Changed(object sender, RoutedEventArgs e)
@@ -1193,6 +1200,25 @@ public partial class MainWindow : Window
         _radius = Math.Max(1, Math.Sqrt(_doc.SizeX * _doc.SizeX + _doc.SizeY * _doc.SizeY + _doc.SizeZ * _doc.SizeZ) / 2);
     }
 
+    // Recalculate the framing after geometry or coloration changes. The deferred
+    // pass is important for the GPU viewport: its swap chain can finish sizing
+    // after the import task, otherwise the first frame may appear off-centre.
+    void RecenterView()
+    {
+        if (_doc is null) return;
+        ComputeBounds();
+        FitCamera();
+        Render();
+        if (!IsLoaded) return;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Render, new Action(() =>
+        {
+            if (_doc is null) return;
+            ComputeBounds();
+            FitCamera();
+            Render();
+        }));
+    }
+
     ColorProposal FinalProposal(int index) => _doc is not null && index >= 0 && index < _layerBases.Count && index < _proposalLayers.Count
         ? Rename(_layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]), _proposals[index].Name, _proposals[index].Description)
         : _selected ?? throw new InvalidOperationException("Aucune proposition sélectionnée.");
@@ -1274,7 +1300,7 @@ public partial class MainWindow : Window
             }
             finally { SetBusy(false); }
         }
-        SelectProposal(proposalIndex); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText();
+        SelectProposal(proposalIndex); RefreshBindings(); RecenterView(); UpdatePatternText();
         ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS";
         _dirty = true; StatusText.Text = $"Style « {style.Name} » appliqué.";
     }
