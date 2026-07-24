@@ -323,6 +323,12 @@ public partial class MainWindow : Window
         _dirty = true;
     }
 
+    void PrintAssistant_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selected is null) { MessageBox.Show("Importez d’abord un modèle.", "Assistant impression"); return; }
+        new PrintAssistantWindow(_selected, _settings, PreferredSlicerName()) { Owner = this }.ShowDialog();
+    }
+
     async void ImportPattern_Click(object sender, RoutedEventArgs e)
     {
         if (_doc is null || _selected is null) { MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Motif image"); return; }

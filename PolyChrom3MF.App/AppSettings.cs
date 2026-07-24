@@ -13,6 +13,10 @@ public sealed class AppSettings
     public bool VerifyAfterExport { get; set; } = true;
     public bool ShowWelcome { get; set; } = true;
     public int ColorCount { get; set; } = 4;
+    public string PrinterName { get; set; } = "Imprimante multicolore";
+    public int MaterialSlots { get; set; } = 4;
+    public double NozzleDiameter { get; set; } = .4;
+    public double LayerHeight { get; set; } = .2;
     public List<string> FilamentColors { get; set; } = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
     public string LastSeenVersion { get; set; } = "";
     public string LastReleaseNotes { get; set; } = "";
@@ -54,6 +58,13 @@ public sealed class SettingsService
         value.PendingUpdateVersion = SafeText(value.PendingUpdateVersion, 32);
         value.PendingUpdateNotes = SafeText(value.PendingUpdateNotes, 4000);
         value.ColorCount = Math.Clamp(value.ColorCount, 2, 32);
+        value.PrinterName = SafeText(value.PrinterName, 100);
+        if (string.IsNullOrWhiteSpace(value.PrinterName)) value.PrinterName = "Imprimante multicolore";
+        value.MaterialSlots = Math.Clamp(value.MaterialSlots, 1, 64);
+        if (!double.IsFinite(value.NozzleDiameter)) value.NozzleDiameter = .4;
+        if (!double.IsFinite(value.LayerHeight)) value.LayerHeight = .2;
+        value.NozzleDiameter = Math.Clamp(value.NozzleDiameter, .1, 2);
+        value.LayerHeight = Math.Clamp(value.LayerHeight, .02, 2);
         value.FilamentColors = (value.FilamentColors ?? [])
             .Where(color => !string.IsNullOrWhiteSpace(color) && Regex.IsMatch(color, "^#[0-9A-Fa-f]{6}$"))
             .Select(color => color.ToUpperInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();

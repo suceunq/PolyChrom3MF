@@ -276,6 +276,15 @@ public class ThreeMfTests
         new ThreeMfService().ExportAndValidate(result.Document, result.Proposals[0], output, true);
         Assert.Equal(result.Document.TriangleCount, new ThreeMfService().Read(output).TriangleCount);
     }
+    [Fact] public void Assistant_impression_associe_les_filaments_et_signale_les_details()
+    {
+        var proposal = new ColorProposal("p", "d", [new("Rouge", "#FF0000"), new("Bleu", "#0000FF")], []);
+        var printer = new PrinterCapabilities("U1", 4, .4, .2, [new(1, "Rouge", "#F50000"), new(2, "Bleu", "#0010F0"), new(3, "Blanc", "#FFFFFF")]);
+        var result = new PrintAssistantService().Analyze(proposal, printer, .2);
+        Assert.Equal([1, 2], result.Matches.Select(match => match.Slot).ToArray());
+        Assert.Single(result.UnusedFilaments);
+        Assert.Contains(result.Warnings, warning => warning.Contains("inférieur à la buse"));
+    }
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }
     [Fact] public void Convertit_stl_en_3mf_valide() { var d = new StlService().Read(AsciiStl()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); new ThreeMfService().Export(d, new PaletteService().Create(1)[0], output); Assert.Equal(1, new ThreeMfService().Read(output).TriangleCount); }
