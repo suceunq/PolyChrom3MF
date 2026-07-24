@@ -1,6 +1,6 @@
 [Setup]
 AppName=PolyChrom 3MF
-AppVersion=1.7.4
+AppVersion=2.0.0
 AppPublisher=bob59
 DefaultDirName={localappdata}\Programs\PolyChrom 3MF
 DefaultGroupName=PolyChrom 3MF
@@ -24,7 +24,7 @@ Name: "french"; MessagesFile: "compiler:Languages\\French.isl"
 Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; GroupDescription: "Raccourcis :"
 
 [Files]
-Source: "publish\\PolyChrom3MF_1.1\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "publish\\PolyChrom3MF_2.0\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\\PolyChrom 3MF"; Filename: "{app}\\PolyChrom3MF.exe"

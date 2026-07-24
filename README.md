@@ -1,6 +1,6 @@
-# PolyChrom 3MF 1.7.4
+# PolyChrom 3MF 2.0.0
 
-Application Windows française et locale pour analyser, visualiser et colorer des fichiers 3MF ou STL sans modifier leur géométrie. Au démarrage, l’utilisateur choisit de 4 à 32 couleurs ; l’application génère quatre propositions, permet les ajustements manuels et contrôle automatiquement chaque export.
+Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un moteur Direct3D 11.
 
 ## Télécharger
 
@@ -32,6 +32,12 @@ Application Windows française et locale pour analyser, visualiser et colorer de
 - Annuler/rétablir et projets portables `.poly3mf` réunissant dans un fichier partageable le modèle 3D, les propositions, les palettes, le PNG intégré, ses réglages et la vue exacte.
 - Ouverture des projets `.poly3mf` par double-clic, glisser-déposer ou menu Fichier, avec compatibilité des anciens projets.
 - Export 3MF standard `basematerials`, géométrie source préservée et validation par réouverture.
+- Subdivision adaptative limitée aux contours des motifs, textes, logos et zones peintes.
+- Calques non destructifs : visibilité, verrouillage, ordre, renommage, duplication, fusion, opacité d’aperçu, texte et effets.
+- Sélection par îlot, angle, couleur, caméra, pièce, rectangle, lasso et régions sémantiques assistées.
+- Moteur Direct3D 11 multithread, cache et LOD automatique pour les très gros modèles.
+- Assistant d’impression avec profils Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer.
+- Galerie portable `.polystyle`, mode débutant et transformation directe des motifs dans la vue.
 
 ## Compilation
 
@@ -44,6 +50,6 @@ ISCC.exe installer.iss
 
 Les livrables sont dans `LIVRAISON_FINALE`. PrusaSlicer 2.9.6 a validé l’export fun d’Eniac : 1 objet, 500 000 triangles, géométrie manifold et dimensions conservées.
 
-## Limites
+## Remarque STL
 
-Les motifs fun sont géométriques et procéduraux : ils décorent même une pièce fusionnée, mais ne reconnaissent pas sémantiquement les yeux ou les vêtements. STL ne stocke ni unité, ni objets, ni matériaux : ses coordonnées sont interprétées en millimètres et il est importé comme un objet. Les extensions 3MF privées sont préservées.
+STL ne stocke ni unité, ni objets, ni matériaux : ses coordonnées sont interprétées en millimètres et il est importé comme un objet. Les extensions 3MF privées sont préservées.

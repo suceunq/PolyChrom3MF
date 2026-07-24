@@ -73,6 +73,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _gpuViewport = new GpuViewportHost();
         GpuHost.Content = _gpuViewport;
+        _gpuViewport.Failed += () => { GpuHost.Visibility = Visibility.Collapsed; Viewer.Visibility = Visibility.Visible; Render(); StatusText.Text = "Moteur Direct3D indisponible : affichage compatible activé."; };
         _layerPreviewTimer.Tick += (_, _) => { _layerPreviewTimer.Stop(); RecomposeSelected(); };
         ApplyStandardMenuColors(MainMenu);
         _settingsExistedAtStartup = File.Exists(_settingsService.FilePath);

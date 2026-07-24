@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0
+
+- Subdivision locale adaptative non destructive sous les motifs, logos, textes et zones peintes.
+- Système de calques complet avec ordre, visibilité, verrouillage, duplication, renommage, fusion, opacité d’aperçu, texte et effets.
+- Sélection intelligente par îlot, angle, couleur, caméra, pièce, rectangle, lasso et détection sémantique assistée.
+- Assistant multicolore avec détection des profils imprimante/filaments et estimation des couches et changements.
+- Moteur Direct3D 11 accéléré, chargement en arrière-plan, LOD automatique et mémoire fortement réduite sur les très gros fichiers.
+- Galerie de styles partageables `.polystyle` et mode débutant.
+- Transformation directe des motifs, redimensionnement libre, copies espacées et miroirs.
+
 ## 1.7.4
 
 - Nouvelle option activée par défaut pour répéter le motif et couvrir toute la pièce, même sur les figurines composées de nombreuses parties.

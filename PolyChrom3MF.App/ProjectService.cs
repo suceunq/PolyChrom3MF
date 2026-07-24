@@ -19,7 +19,12 @@ public sealed class ProjectService
         if (document.IsDerived)
         {
             derivedSnapshot = Path.Combine(Path.GetTempPath(), $"PolyChrom-derived-{Guid.NewGuid():N}.3mf");
-            new ThreeMfService().ExportAndValidate(document, proposals[Math.Clamp(selected, 0, proposals.Count - 1)], derivedSnapshot, false);
+            try { new ThreeMfService().ExportAndValidate(document, proposals[Math.Clamp(selected, 0, proposals.Count - 1)], derivedSnapshot, false); }
+            catch
+            {
+                try { if (File.Exists(derivedSnapshot)) File.Delete(derivedSnapshot); } catch { }
+                throw;
+            }
             modelSource = derivedSnapshot;
         }
         var extension = Path.GetExtension(modelSource).ToLowerInvariant();

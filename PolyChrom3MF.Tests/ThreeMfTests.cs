@@ -153,6 +153,21 @@ public class ThreeMfTests
     [Fact] public void Peut_exporter_sur_le_fichier_source_sans_le_corrompre() { var path = Sample(); var service = new ThreeMfService(); var document = service.Read(path); service.Export(document, new PaletteService().Create(document)[0], path); var reopened = service.Read(path); Assert.Equal(document.TriangleCount, reopened.TriangleCount); Assert.True(reopened.ExistingColorCount >= 4); }
     [Fact] public void Export_preserve_les_entrees_originales() { var p = Sample(); using (var z = ZipFile.Open(p, ZipArchiveMode.Update)) using (var w = new StreamWriter(z.CreateEntry("Metadata/keep.txt").Open())) w.Write("conserver"); var s = new ThreeMfService(); var d = s.Read(p); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); s.Export(d, new PaletteService().Create(1)[0], output); using var result = ZipFile.OpenRead(output); Assert.NotNull(result.GetEntry("Metadata/keep.txt")); }
     [Fact] public void Projet_portable_conserve_modele_et_affectations() { var source = Sample(2); var d = new ThreeMfService().Read(source); var proposals = new PaletteService().Create(d); proposals[0].Assignments[1] = 0; proposals[0].TriangleAssignments[0][0] = 3; var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); var service = new ProjectService(); service.Save(path, d, proposals, 0, 1, 2, 3, funMode: true, colorCount: 8); File.Delete(source); var loaded = service.Load(path); Assert.True(File.Exists(loaded.SourcePath)); Assert.Equal(2, new ThreeMfService().Read(loaded.SourcePath).TriangleCount); Assert.Equal(0, loaded.Assignments[0][1]); Assert.Equal(3, loaded.TriangleAssignments![0][0][0]); Assert.Equal(3, loaded.Zoom); Assert.True(loaded.FunMode); Assert.Equal(8, loaded.ColorCount); }
+    [Fact] public void Projet_portable_conserve_les_calques_non_destructifs()
+    {
+        var source = Sample(); var document = new ThreeMfService().Read(source); var proposals = new PaletteService().Create(document);
+        var values = Enumerable.Repeat(-1, document.Objects[0].Triangles.Count).ToArray(); values[0] = 2;
+        var layer = new LayerService().Create("Logo", ColorLayerKind.MonochromeLogo) with { IsLocked = true, PreviewOpacity = .6, TriangleOverrides = new() { [0] = values } };
+        var groups = proposals.Select(_ => (IReadOnlyList<ColorLayer>)[layer.Duplicate()]).ToList();
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf");
+        new ProjectService().Save(path, document, proposals, 0, 0, 0, 1, layers: groups, layerBases: proposals);
+        var loaded = new ProjectService().Load(path);
+        ProjectService.ValidateForDocument(loaded, document);
+        Assert.Equal("Logo", loaded.Layers![0][0].Name);
+        Assert.True(loaded.Layers[0][0].IsLocked);
+        Assert.Equal(.6, loaded.Layers[0][0].PreviewOpacity, 3);
+        Assert.Equal(2, loaded.Layers[0][0].TriangleOverrides[0][0]);
+    }
     [Fact] public void Parametres_corrompus_sont_assainis() { var settings = new AppSettings { Theme = "inconnu", ExportFolder = "", PreferredSlicer = null!, ColorCount = 99, FilamentColors = ["incorrect", "#aabbcc", "#AABBCC"] }; SettingsService.Normalize(settings); Assert.Equal("Sombre", settings.Theme); Assert.Equal(32, settings.ColorCount); Assert.Equal("", settings.PreferredSlicer); Assert.Equal(["#AABBCC"], settings.FilamentColors); Assert.False(string.IsNullOrWhiteSpace(settings.ExportFolder)); }
     [Fact] public void Refuse_un_projet_aux_couleurs_invalides() { var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); File.WriteAllText(path, "{\"SourcePath\":\"x.3mf\",\"SelectedProposal\":0,\"Proposals\":[[\"danger\",\"#000000\",\"#111111\",\"#222222\"]],\"Assignments\":[],\"Yaw\":0,\"Pitch\":0,\"Zoom\":1,\"Generation\":0,\"ColorCount\":4}"); Assert.Throws<InvalidDataException>(() => new ProjectService().Load(path)); }
     [Fact] public void Refuse_un_projet_aux_listes_absentes() { var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); File.WriteAllText(path, "{\"SourcePath\":\"x.3mf\",\"SelectedProposal\":0,\"Proposals\":null,\"Assignments\":null,\"Yaw\":0,\"Pitch\":0,\"Zoom\":1,\"Generation\":0,\"ColorCount\":4}"); Assert.Throws<InvalidDataException>(() => new ProjectService().Load(path)); }

@@ -20,6 +20,7 @@ public sealed class GpuViewportHost : Grid, IDisposable
     bool _failed;
 
     public bool IsAvailable => !_failed;
+    public event Action? Failed;
 
     public GpuViewportHost()
     {
@@ -97,6 +98,7 @@ public sealed class GpuViewportHost : Grid, IDisposable
         {
             _failed = true;
             Visibility = System.Windows.Visibility.Collapsed;
+            Failed?.Invoke();
         }
     }
 

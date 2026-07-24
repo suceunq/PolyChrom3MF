@@ -11,13 +11,14 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
-        "Aperçu en direct du motif pendant tous les réglages.\n" +
-        "Nouveau pinceau fluide avec tracé instantané sur les modèles complexes.\n" +
-        "Correction de l’erreur inter-thread lors de l’application du pinceau.\n" +
-        "La peinture reste limitée à la surface visible de la figurine.\n" +
-        "Annuler un motif restaure exactement la coloration précédente.\n" +
-        "Assemblage, recentrage et rotation à 360° des modèles améliorés.\n" +
-        "Corrections de stabilité et de performances.";
+        "Subdivision locale adaptative sous les logos, textes, motifs et zones peintes.\n" +
+        "Calques non destructifs avec visibilité, verrouillage, ordre, duplication, fusion et opacité d’aperçu.\n" +
+        "Sélections intelligentes : îlot, angle, couleur, caméra, pièce, rectangle, lasso et détection sémantique.\n" +
+        "Assistant multicolore avec détection des profils de slicer, correspondance des filaments et estimation des changements.\n" +
+        "Nouveau moteur Direct3D 11 multithread avec LOD automatique pour les modèles de plusieurs millions de triangles.\n" +
+        "Galerie de styles .polystyle, calques texte/effets et mode débutant.\n" +
+        "Manipulation directe des motifs dans la vue 3D, copies, miroir et redimensionnement libre.\n" +
+        "Import, mémoire, export et stabilité renforcés.";
 
     const string LatestReleaseApi = "https://api.github.com/repos/suceunq/PolyChrom3MF/releases/latest";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";
