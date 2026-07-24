@@ -20,7 +20,8 @@ public sealed record PatternSettings(
     bool MonochromeLogo = false,
     int LogoColorIndex = 0,
     bool InvertLogo = false,
-    byte LogoThreshold = 128);
+    byte LogoThreshold = 128,
+    bool RepeatAcrossModel = true);
 
 public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTriangles);
 
@@ -57,6 +58,7 @@ public sealed class PatternService
                 var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
                 var x = (a.X + b.X + c.X) / 3; var y = (a.Y + b.Y + c.Y) / 3; var z = (a.Z + b.Z + c.Z) / 3;
                 var (u, v, repeats) = Coordinates(mode, x, y, z, a, b, c, bounds);
+                (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
                 (u, v) = Transform(u, v, settings, repeats);
                 if (!repeats && (u < 0 || u > 1 || v < 0 || v > 1)) { transparent++; continue; }
                 u = repeats ? Wrap(u) : Math.Clamp(u, 0, 1);
@@ -89,6 +91,15 @@ public sealed class PatternService
     {
         var luminance = (red * 299 + green * 587 + blue * 114) / 1000;
         return invert ? luminance <= threshold : luminance >= threshold;
+    }
+
+    internal static (double U, double V, bool Repeats) ApplyCoverage(double u, double v, bool repeats, PatternMode mode, bool repeatAcrossModel)
+    {
+        if (!repeatAcrossModel || mode == PatternMode.Repeated) return (u, v, repeats);
+        // A single frontal projection can leave large parts of an articulated
+        // model on one background pixel. Tiling gives every component several
+        // opportunities to meet the actual logo while preserving its shape.
+        return (u * 3, v * 3, true);
     }
 
     public static void ValidateImage(string path) => _ = Load(path);

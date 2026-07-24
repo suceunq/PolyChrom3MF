@@ -53,7 +53,7 @@ public sealed class SettingsService
         value.LastReleaseNotes = SafeText(value.LastReleaseNotes, 4000);
         value.PendingUpdateVersion = SafeText(value.PendingUpdateVersion, 32);
         value.PendingUpdateNotes = SafeText(value.PendingUpdateNotes, 4000);
-        value.ColorCount = Math.Clamp(value.ColorCount, 4, 32);
+        value.ColorCount = Math.Clamp(value.ColorCount, 2, 32);
         value.FilamentColors = (value.FilamentColors ?? [])
             .Where(color => !string.IsNullOrWhiteSpace(color) && Regex.IsMatch(color, "^#[0-9A-Fa-f]{6}$"))
             .Select(color => color.ToUpperInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();

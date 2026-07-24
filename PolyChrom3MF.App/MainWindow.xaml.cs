@@ -64,7 +64,7 @@ public partial class MainWindow : Window
             _settings.LastReleaseNotes = UpdateService.BundledReleaseNotes;
             _settingsService.Save(_settings);
         }
-        _colorCount = Math.Clamp(_settings.ColorCount, 4, 32);
+        _colorCount = Math.Clamp(_settings.ColorCount, 2, 32);
         EnsurePreferredSlicer();
         BuildScene();
         ApplyTheme();
@@ -201,6 +201,28 @@ public partial class MainWindow : Window
         SelectProposal(_proposals.IndexOf(proposal));
         Render();
         StatusText.Text = $"{proposal.Name} sélectionnée.";
+    }
+
+    void ProposalColor_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PaletteColor color) return;
+        var proposalIndex = _proposals.FindIndex(proposal => proposal.Colors.Any(candidate => ReferenceEquals(candidate, color)));
+        if (proposalIndex < 0) return;
+        var proposal = _proposals[proposalIndex];
+        var colorIndex = proposal.Colors.FindIndex(candidate => ReferenceEquals(candidate, color));
+        if (colorIndex < 0) return;
+        using var dialog = new System.Windows.Forms.ColorDialog { FullOpen = true, AnyColor = true };
+        dialog.Color = System.Drawing.Color.FromArgb(color.Color.R, color.Color.G, color.Color.B);
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) { e.Handled = true; return; }
+        PushUndo();
+        SelectProposal(proposalIndex);
+        var hex = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        proposal.Colors[colorIndex] = new PaletteColor("Personnalisée", hex);
+        RefreshBindings();
+        Render();
+        _dirty = true;
+        StatusText.Text = $"Couleur {colorIndex + 1} de {proposal.Name} remplacée par {hex}.";
+        e.Handled = true;
     }
 
     void Regenerate_Click(object sender, RoutedEventArgs e)
@@ -624,7 +646,7 @@ public partial class MainWindow : Window
             if (!File.Exists(project.SourcePath)) throw new FileNotFoundException("Le fichier 3MF ou STL source du projet est introuvable.", project.SourcePath);
             if (!await LoadModel(project.SourcePath)) return;
             ProjectService.ValidateForDocument(project, _doc!);
-            _generation = project.Generation; _funMode = project.FunMode; _colorCount = Math.Clamp(project.ColorCount, 4, 32); _settings.ColorCount = _colorCount;
+            _generation = project.Generation; _funMode = project.FunMode; _colorCount = Math.Clamp(project.ColorCount, 2, 32); _settings.ColorCount = _colorCount;
             _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false;
             GenerateProposals();
             for (var p = 0; p < Math.Min(4, project.Proposals.Count); p++)
