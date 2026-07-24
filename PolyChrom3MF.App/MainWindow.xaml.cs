@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     readonly PatternService _patternService = new();
     readonly PatternGeometryService _patternGeometryService = new();
     readonly SmartSelectionService _smartSelection = new();
+    readonly LocalRefinementService _localRefinement = new();
     readonly LayerService _layerService = new();
     readonly ProjectService _projects = new();
     readonly SettingsService _settingsService = new();
@@ -803,11 +804,26 @@ public partial class MainWindow : Window
         return (a, b, c);
     }
 
-    void ApplyPaintSelection_Click(object sender, RoutedEventArgs e)
+    async void ApplyPaintSelection_Click(object sender, RoutedEventArgs e)
     {
         if (_doc is null || _selected is null || _selected.Colors.Count == 0 || _paintSelection.Count == 0) { MessageBox.Show("Activez la sélection de zones et cliquez sur le modèle avant d’appliquer une couleur.", "Coloration manuelle"); return; }
         var colorIndex = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1); PushUndo();
         var proposalIndex = SelectedProposalIndex();
+        var levels = _doc.TriangleCount switch { < 200_000 => 2, < 2_000_000 => 1, _ => 0 };
+        if (levels > 0)
+        {
+            SetBusy(true, "Subdivision locale sous la zone peinte…");
+            try
+            {
+                var refinement = await Task.Run(() => _localRefinement.Refine(_doc, _proposals, _layerBases, _proposalLayers, _paintSelection, levels));
+                _doc = refinement.Document; _proposals = refinement.Proposals; _layerBases = refinement.Bases; _proposalLayers = refinement.Layers;
+                _paintSelection.Clear(); foreach (var pair in refinement.Selection) _paintSelection[pair.Key] = pair.Value;
+                SelectProposal(proposalIndex); ComputeBounds();
+                if (refinement.AddedTriangles > 0) StatusText.Text = $"{refinement.AddedTriangles:N0} triangles ajoutés uniquement sous la peinture.";
+            }
+            finally { SetBusy(false); }
+        }
+        _selected = _proposals[proposalIndex];
         var layer = SelectedLayer();
         if (layer is null || layer.Kind == ColorLayerKind.BaseColor)
         {

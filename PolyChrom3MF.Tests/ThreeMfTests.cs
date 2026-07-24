@@ -210,6 +210,18 @@ public class ThreeMfTests
         Assert.Equal(source.Vertices.Min(v => v.Y), result.Object.Vertices.Min(v => v.Y));
         Assert.Equal(source.Vertices.Max(v => v.Y), result.Object.Vertices.Max(v => v.Y));
     }
+    [Fact] public void Subdivision_de_peinture_remappe_calques_et_selection()
+    {
+        var document = FunDocument();
+        var proposals = new PaletteService().Create(document);
+        var bases = proposals.Select(p => new ColorProposal(p.Name, p.Description, p.Colors.ToList(), new(p.Assignments)) { TriangleAssignments = p.TriangleAssignments.ToDictionary(x => x.Key, x => (int[])x.Value.Clone()) }).ToList();
+        var overrides = Enumerable.Repeat(-1, document.Objects[0].Triangles.Count).ToArray(); overrides[0] = 2;
+        var layers = proposals.Select(_ => (IReadOnlyList<ColorLayer>)[new LayerService().Create("Peinture", ColorLayerKind.Paint) with { TriangleOverrides = new() { [0] = overrides } }]).ToList();
+        var result = new LocalRefinementService().Refine(document, proposals, bases, layers, new Dictionary<int, HashSet<int>> { [0] = [0] }, 1);
+        Assert.True(result.AddedTriangles > 0);
+        Assert.True(result.Selection[0].Count > 1);
+        Assert.Equal(result.Document.Objects[0].Triangles.Count, result.Layers[0][0].TriangleOverrides[0].Length);
+    }
     [Fact] public void Calques_composent_sans_modifier_la_proposition_source()
     {
         var document = FunDocument();
