@@ -13,6 +13,10 @@ using MessageBox = System.Windows.MessageBox;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using SystemColors = System.Windows.SystemColors;
+using Button = System.Windows.Controls.Button;
+using TextBox = System.Windows.Controls.TextBox;
+using Orientation = System.Windows.Controls.Orientation;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
 
 namespace PolyChrom3MF.App;
 
@@ -34,6 +38,7 @@ public partial class MainWindow : Window
     readonly UpdateService _updateService = new();
     readonly StyleLibraryService _styleLibrary = new();
     readonly GpuViewportHost _gpuViewport;
+    readonly System.Windows.Threading.DispatcherTimer _layerPreviewTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
     readonly Dictionary<GeometryModel3D, Dictionary<(int A, int B, int C), int>> _renderTriangleLookup = [];
     readonly Dictionary<int, double> _objectDiagonals = [];
@@ -67,6 +72,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _gpuViewport = new GpuViewportHost();
         GpuHost.Content = _gpuViewport;
+        _layerPreviewTimer.Tick += (_, _) => { _layerPreviewTimer.Stop(); RecomposeSelected(); };
         ApplyStandardMenuColors(MainMenu);
         _settingsExistedAtStartup = File.Exists(_settingsService.FilePath);
         _settings = _settingsService.Load();
@@ -250,7 +256,7 @@ public partial class MainWindow : Window
         if (_doc is null) return;
         var index = SelectedProposalIndex();
         if (index < 0 || index >= _layerBases.Count || index >= _proposalLayers.Count) return;
-        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]);
+        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index], previewOpacity: true);
         _proposals[index] = Rename(composed, _selected!.Name, _selected.Description);
         _selected = _proposals[index];
         RefreshBindings();
@@ -641,6 +647,8 @@ public partial class MainWindow : Window
         LayerVisible.IsEnabled = LayerLocked.IsEnabled = layer is not null;
         LayerVisible.IsChecked = layer?.IsVisible ?? false;
         LayerLocked.IsChecked = layer?.IsLocked ?? false;
+        LayerOpacity.IsEnabled = layer is not null;
+        LayerOpacity.Value = (layer?.PreviewOpacity ?? 1) * 100;
     }
 
     void AddLayer_Click(object sender, RoutedEventArgs e)
@@ -663,6 +671,33 @@ public partial class MainWindow : Window
         RecomposeSelected();
         RefreshLayers();
         _dirty = true;
+    }
+
+    void RenameLayer_Click(object sender, RoutedEventArgs e)
+    {
+        var proposal = SelectedProposalIndex(); var layer = SelectedLayer();
+        if (proposal < 0 || layer is null) return;
+        var value = PromptText("Renommer le calque", "Nom du calque", layer.Name);
+        if (value is null) return;
+        PushUndo();
+        var index = _proposalLayers[proposal].FindIndex(item => item.Id == layer.Id);
+        _proposalLayers[proposal][index] = layer with { Name = LayerService.SafeName(value) };
+        RefreshLayers(); _dirty = true;
+    }
+
+    void MergeLayer_Click(object sender, RoutedEventArgs e)
+    {
+        var proposal = SelectedProposalIndex(); var upper = SelectedLayer();
+        if (proposal < 0 || upper is null) return;
+        var layers = _proposalLayers[proposal]; var upperIndex = layers.FindIndex(item => item.Id == upper.Id);
+        if (upperIndex <= 0) { MessageBox.Show("Sélectionnez un calque placé au-dessus d’un autre calque."); return; }
+        try
+        {
+            PushUndo(); var merged = _layerService.Merge(layers[upperIndex - 1], upper);
+            layers.RemoveAt(upperIndex); layers[upperIndex - 1] = merged;
+            RecomposeSelected(); RefreshLayers(); _dirty = true;
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Fusion impossible", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
     void DeleteLayer_Click(object sender, RoutedEventArgs e)
@@ -708,6 +743,16 @@ public partial class MainWindow : Window
         RecomposeSelected();
         RefreshLayers();
         _dirty = true;
+    }
+
+    void LayerOpacity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loadingControls) return;
+        var proposal = SelectedProposalIndex(); var layer = SelectedLayer();
+        if (proposal < 0 || layer is null) return;
+        var index = _proposalLayers[proposal].FindIndex(item => item.Id == layer.Id);
+        _proposalLayers[proposal][index] = layer with { PreviewOpacity = Math.Clamp(e.NewValue / 100d, 0, 1) };
+        _layerPreviewTimer.Stop(); _layerPreviewTimer.Start(); _dirty = true;
     }
 
     async void PaintMode_Changed(object sender, RoutedEventArgs e)
@@ -947,7 +992,8 @@ public partial class MainWindow : Window
         SetBusy(true, "Exportation et vérification du fichier 3MF…");
         try
         {
-            var report = await Task.Run(() => _service.ExportAndValidate(_doc, _selected, dialog.FileName, _settings.VerifyAfterExport));
+            var exportProposal = FinalProposal(SelectedProposalIndex());
+            var report = await Task.Run(() => _service.ExportAndValidate(_doc, exportProposal, dialog.FileName, _settings.VerifyAfterExport));
             StatusText.Text = _settings.VerifyAfterExport ? "Export terminé et vérifié avec succès." : "Export terminé avec succès.";
             _lastSlicerFile = dialog.FileName; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             var slicerName = PreferredSlicerName();
@@ -1100,6 +1146,22 @@ public partial class MainWindow : Window
         _modelCenter = new Point3D((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
         _center = _modelCenter;
         _radius = Math.Max(1, Math.Sqrt(_doc.SizeX * _doc.SizeX + _doc.SizeY * _doc.SizeY + _doc.SizeZ * _doc.SizeZ) / 2);
+    }
+
+    ColorProposal FinalProposal(int index) => _doc is not null && index >= 0 && index < _layerBases.Count && index < _proposalLayers.Count
+        ? Rename(_layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]), _proposals[index].Name, _proposals[index].Description)
+        : _selected ?? throw new InvalidOperationException("Aucune proposition sélectionnée.");
+
+    string? PromptText(string title, string label, string initial)
+    {
+        var input = new TextBox { Text = initial, MinWidth = 300, Margin = new Thickness(0, 6, 0, 12) };
+        var window = new Window { Title = title, Owner = this, Width = 390, Height = 180, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var panel = new StackPanel { Margin = new Thickness(18) };
+        panel.Children.Add(new TextBlock { Text = label }); panel.Children.Add(input);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancel = new Button { Content = "Annuler", IsCancel = true, MinWidth = 90 }; var ok = new Button { Content = "Valider", IsDefault = true, MinWidth = 90 };
+        ok.Click += (_, _) => window.DialogResult = true; actions.Children.Add(cancel); actions.Children.Add(ok); panel.Children.Add(actions); window.Content = panel;
+        return window.ShowDialog() == true ? input.Text : null;
     }
 
     void SaveStyle_Click(object sender, RoutedEventArgs e)

@@ -59,7 +59,7 @@ public sealed class LayerService
         }
     }
 
-    public ColorProposal Compose(ModelDocument document, ColorProposal basis, IReadOnlyList<ColorLayer> layers)
+    public ColorProposal Compose(ModelDocument document, ColorProposal basis, IReadOnlyList<ColorLayer> layers, bool previewOpacity = false)
     {
         Validate(layers, document, basis.Colors.Count);
         var result = new ColorProposal(
@@ -83,10 +83,18 @@ public sealed class LayerService
             {
                 if (!layer.TriangleOverrides.TryGetValue(obj.Index, out var overrides)) continue;
                 for (var index = 0; index < assignments.Length; index++)
-                    if (overrides[index] >= 0) assignments[index] = overrides[index];
+                    if (overrides[index] >= 0 && (!previewOpacity || layer.PreviewOpacity >= 1 ||
+                        StableFraction(layer.Id, obj.Index, index) <= layer.PreviewOpacity))
+                        assignments[index] = overrides[index];
             }
         }
         return result;
+    }
+
+    static double StableFraction(Guid id, int objectIndex, int triangleIndex)
+    {
+        var hash = HashCode.Combine(id, objectIndex, triangleIndex);
+        return (uint)hash / (double)uint.MaxValue;
     }
 
     public ColorLayer Merge(ColorLayer lower, ColorLayer upper)
