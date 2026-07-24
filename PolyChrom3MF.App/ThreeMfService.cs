@@ -47,15 +47,23 @@ public sealed class ThreeMfService
             if (objects.Count == 0) objects = ReadUninstantiatedMeshes(modelParts);
 
             if (objects.Count == 0) throw new InvalidDataException("Aucun maillage exploitable n’a été trouvé dans les fragments 3MF.");
-            var all = objects.SelectMany(x => x.Vertices).ToArray();
+            var minX = double.PositiveInfinity; var minY = double.PositiveInfinity; var minZ = double.PositiveInfinity;
+            var maxX = double.NegativeInfinity; var maxY = double.NegativeInfinity; var maxZ = double.NegativeInfinity;
+            foreach (var vertex in objects.SelectMany(x => x.Vertices))
+            {
+                minX = Math.Min(minX, vertex.X); minY = Math.Min(minY, vertex.Y); minZ = Math.Min(minZ, vertex.Z);
+                maxX = Math.Max(maxX, vertex.X); maxY = Math.Max(maxY, vertex.Y); maxZ = Math.Max(maxZ, vertex.Z);
+            }
             var componentCount = parts.Sum(p => p.Xml.Descendants(Core + "component").Count());
             var existingColors = parts.Sum(p => p.Xml.Descendants(Core + "base").Count() + p.Xml.Descendants().Count(x => x.Name.LocalName == "color"));
             var warnings = new List<string>();
             if (parts.Count > 1) warnings.Add($"Structure 3MF multipartie détectée ({parts.Count} fragments). ");
             if (objects.Count == 1 && componentCount == 0) warnings.Add("Objet fusionné : aucune séparation sémantique ne sera inventée.");
 
-            return new ModelDocument(path, mainXml, mainEntry.FullName, objects,
-                all.Max(x => x.X) - all.Min(x => x.X), all.Max(x => x.Y) - all.Min(x => x.Y), all.Max(x => x.Z) - all.Min(x => x.Z),
+            // The original package is reopened on export; retaining its full XML tree
+            // would duplicate hundreds of MB on dense 3MF files.
+            return new ModelDocument(path, new XDocument(), mainEntry.FullName, objects,
+                maxX - minX, maxY - minY, maxZ - minZ,
                 zip.Entries.Select(e => e.FullName).ToList(), objects.Sum(o => (long)o.Triangles.Count),
                 warnings.Count == 0 ? null : string.Join(" ", warnings), mainXml.Root!.Attribute("unit")?.Value ?? "millimeter", componentCount, existingColors, "3MF");
         }

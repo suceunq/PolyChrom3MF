@@ -111,6 +111,8 @@ public partial class MainWindow : Window
         {
             _doc = await Task.Run(() => Path.GetExtension(path).Equals(".stl", StringComparison.OrdinalIgnoreCase) ? _stlService.Read(path) : _service.Read(path));
             if (_doc.TriangleCount > FullDetailTriangleLimit)
+                await Task.Run(() => GC.Collect(2, GCCollectionMode.Aggressive, true, true));
+            if (_doc.TriangleCount > FullDetailTriangleLimit && !_settings.UseGpuRenderer)
             {
                 SetActivity(true, $"Optimisation de l’aperçu de {_doc.TriangleCount:N0} faces…");
                 _previewMeshes = await Task.Run(() => BuildPreviewMeshes(_doc));
@@ -708,7 +710,7 @@ public partial class MainWindow : Window
         _dirty = true;
     }
 
-    void PaintMode_Changed(object sender, RoutedEventArgs e)
+    async void PaintMode_Changed(object sender, RoutedEventArgs e)
     {
         if (PaintMode is null || PaintModeMenu is null) return;
         var enabled = sender == PaintModeMenu ? PaintModeMenu.IsChecked : PaintMode.IsChecked == true;
@@ -718,6 +720,12 @@ public partial class MainWindow : Window
         {
             _paintStroke = false;
             Viewer?.ReleaseMouseCapture();
+        }
+        else if (_doc is not null && _doc.TriangleCount > FullDetailTriangleLimit && _previewMeshes.Count == 0)
+        {
+            SetBusy(true, "Préparation du niveau de détail pour la peinture…");
+            try { _previewMeshes = await Task.Run(() => BuildPreviewMeshes(_doc)); }
+            finally { SetBusy(false); }
         }
         UpdateBrushCursorVisibility();
         Render();

@@ -63,15 +63,15 @@ public sealed class GpuViewportHost : Grid, IDisposable
             while (_viewport.Items.Count > 2) _viewport.Items.RemoveAt(2);
             foreach (var meshData in data)
             {
-                    var geometry = new MeshGeometry3D { Positions = new Vector3Collection(meshData.Positions), Indices = new IntCollection(meshData.Indices) };
+                    var geometry = new MeshGeometry3D { Positions = new Vector3Collection(meshData.Positions), Indices = new IntCollection(meshData.Indices), Colors = new Color4Collection(meshData.Colors) };
                     geometry.UpdateNormals();
-                    var color = meshData.Color;
                     var material = new PhongMaterial
                     {
-                        DiffuseColor = ToColor4(color),
-                        AmbientColor = ToColor4(MediaColor.Multiply(color, .28f)),
+                        DiffuseColor = new Color4(1, 1, 1, 1),
+                        AmbientColor = new Color4(.25f, .25f, .25f, 1),
                         SpecularColor = new Color4(.18f, .18f, .18f, 1),
-                        SpecularShininess = 18
+                        SpecularShininess = 18,
+                        VertexColorBlendingFactor = 1
                     };
                     _viewport.Items.Add(new MeshGeometryModel3D
                     {
@@ -103,23 +103,32 @@ public sealed class GpuViewportHost : Grid, IDisposable
     static List<GpuMeshData> BuildData(ModelDocument document, ColorProposal proposal, CancellationToken cancellationToken)
     {
         var result = new List<GpuMeshData>();
+        const int targetTriangles = 1_200_000;
+        var stride = Math.Max(1, (int)Math.Ceiling(document.TriangleCount / (double)targetTriangles));
         foreach (var obj in document.Objects)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var positions = obj.Vertices.Select(vertex => new Vector3((float)vertex.X, (float)vertex.Y, (float)vertex.Z)).ToArray();
-            var byColor = Enumerable.Range(0, proposal.Colors.Count).Select(_ => new List<int>()).ToArray();
+            var positions = new List<Vector3>(Math.Min(obj.Vertices.Count, obj.Triangles.Count * 3 / stride));
+            var indices = new List<int>(obj.Triangles.Count * 3 / stride + 3);
+            var colors = new List<Color4>(positions.Capacity);
+            var remap = new Dictionary<int, int>(positions.Capacity);
             var assignments = proposal.TriangleAssignments.GetValueOrDefault(obj.Index);
-            for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
+            int Map(int source, Color4 color)
+            {
+                if (remap.TryGetValue(source, out var mapped)) { colors[mapped] = color; return mapped; }
+                var vertex = obj.Vertices[source]; mapped = positions.Count; remap[source] = mapped;
+                positions.Add(new Vector3((float)vertex.X, (float)vertex.Y, (float)vertex.Z)); colors.Add(color); return mapped;
+            }
+            for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex += stride)
             {
                 if ((triangleIndex & 32767) == 0) cancellationToken.ThrowIfCancellationRequested();
                 var assigned = assignments is null ? proposal.Assignments.GetValueOrDefault(obj.Index, 0) : assignments[triangleIndex];
-                assigned = Math.Clamp(assigned, 0, byColor.Length - 1);
+                assigned = Math.Clamp(assigned, 0, proposal.Colors.Count - 1);
                 var triangle = obj.Triangles[triangleIndex];
-                byColor[assigned].Add(triangle.A); byColor[assigned].Add(triangle.B); byColor[assigned].Add(triangle.C);
+                var color = ToColor4(proposal.Colors[assigned].Color);
+                indices.Add(Map(triangle.A, color)); indices.Add(Map(triangle.B, color)); indices.Add(Map(triangle.C, color));
             }
-            for (var colorIndex = 0; colorIndex < byColor.Length; colorIndex++)
-                if (byColor[colorIndex].Count > 0)
-                    result.Add(new GpuMeshData(positions, byColor[colorIndex].ToArray(), proposal.Colors[colorIndex].Color));
+            result.Add(new GpuMeshData(positions.ToArray(), indices.ToArray(), colors.ToArray()));
         }
         return result;
     }
@@ -133,5 +142,5 @@ public sealed class GpuViewportHost : Grid, IDisposable
         _viewport.Dispose();
     }
 
-    sealed record GpuMeshData(Vector3[] Positions, int[] Indices, MediaColor Color);
+    sealed record GpuMeshData(Vector3[] Positions, int[] Indices, Color4[] Colors);
 }
