@@ -285,6 +285,25 @@ public class ThreeMfTests
         Assert.Single(result.UnusedFilaments);
         Assert.Contains(result.Warnings, warning => warning.Contains("inférieur à la buse"));
     }
+    [Fact] public void Style_natif_conserve_palette_motif_et_profil()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".polystyle");
+        var source = new PolyStyleData("Graffiti", "Test", ["#112233", "#AABBCC"], new PatternSettings(Png(), PatternMode.Triplanar),
+            [ColorLayerKind.BaseColor, ColorLayerKind.Image], "U1", 4, DateTimeOffset.UtcNow);
+        var service = new StyleLibraryService();
+        service.Save(path, source);
+        var loaded = service.Load(path);
+        Assert.Equal(source.Colors, loaded.Colors);
+        Assert.Equal(PatternMode.Triplanar, loaded.Pattern?.Mode);
+        Assert.True(File.Exists(loaded.Pattern?.ImagePath));
+        Assert.Equal("U1", loaded.PrinterName);
+    }
+    [Fact] public void Lasso_identifie_correctement_l_interieur()
+    {
+        System.Windows.Point[] polygon = [new(0, 0), new(10, 0), new(10, 10), new(0, 10)];
+        Assert.True(MainWindow.PointInPolygon(new(5, 5), polygon));
+        Assert.False(MainWindow.PointInPolygon(new(15, 5), polygon));
+    }
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }
     [Fact] public void Convertit_stl_en_3mf_valide() { var d = new StlService().Read(AsciiStl()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); new ThreeMfService().Export(d, new PaletteService().Create(1)[0], output); Assert.Equal(1, new ThreeMfService().Read(output).TriangleCount); }

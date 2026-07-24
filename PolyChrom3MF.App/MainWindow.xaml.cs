@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     readonly SettingsService _settingsService = new();
     readonly SlicerDetectionService _slicerDetection = new();
     readonly UpdateService _updateService = new();
+    readonly StyleLibraryService _styleLibrary = new();
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
     readonly Dictionary<GeometryModel3D, Dictionary<(int A, int B, int C), int>> _renderTriangleLookup = [];
     readonly Dictionary<int, double> _objectDiagonals = [];
@@ -148,6 +149,22 @@ public partial class MainWindow : Window
         if (text is not null) StatusText.Text = text;
         SetActivity(busy, text);
         IsEnabled = !busy;
+    }
+
+    async void BeginnerMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmDiscard()) return;
+        var dialog = new BeginnerWizardWindow(_settings, PreferredSlicerName()) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Choice is null) return;
+        _colorCount = dialog.Choice.ColorCount;
+        _generation = dialog.Choice.StyleIndex;
+        _funMode = dialog.Choice.FunMode;
+        _settings.ColorCount = _colorCount; _settingsService.Save(_settings);
+        if (!await LoadModel(dialog.Choice.ModelPath)) return;
+        _generation = dialog.Choice.StyleIndex;
+        _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false;
+        GenerateProposals(); SelectProposal(Math.Min(dialog.Choice.StyleIndex, _proposals.Count - 1)); RefreshBindings(); Render();
+        StatusText.Text = "Mode débutant prêt : choisissez une proposition, prévisualisez puis exportez.";
     }
 
     void SetActivity(bool visible, string? text = null, bool determinate = false, double value = 0)
@@ -1009,6 +1026,76 @@ public partial class MainWindow : Window
         _modelCenter = new Point3D((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
         _center = _modelCenter;
         _radius = Math.Max(1, Math.Sqrt(_doc.SizeX * _doc.SizeX + _doc.SizeY * _doc.SizeY + _doc.SizeZ * _doc.SizeZ) / 2);
+    }
+
+    void SaveStyle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selected is null) { MessageBox.Show("Sélectionnez une proposition avant d’enregistrer un style."); return; }
+        var dialog = new SaveFileDialog
+        {
+            Filter = "Style PolyChrom (*.polystyle)|*.polystyle",
+            FileName = _selected.Name.Replace(' ', '_') + ".polystyle",
+            InitialDirectory = _styleLibrary.LibraryFolder
+        };
+        if (dialog.ShowDialog() != true) return;
+        try
+        {
+            var proposal = SelectedProposalIndex();
+            var style = new PolyStyleData(_selected.Name, _selected.Description, _selected.Colors.Select(color => color.Hex).ToList(), _pattern,
+                proposal >= 0 && proposal < _proposalLayers.Count ? _proposalLayers[proposal].Select(layer => layer.Kind).ToList() : [],
+                _settings.PrinterName, _settings.MaterialSlots, DateTimeOffset.UtcNow);
+            _styleLibrary.Save(dialog.FileName, style);
+            StatusText.Text = $"Style partagé enregistré : {Path.GetFileName(dialog.FileName)}.";
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Style impossible à enregistrer", MessageBoxButton.OK, MessageBoxImage.Error); }
+    }
+
+    async void StyleGallery_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new StyleGalleryWindow { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.SelectedStyle is null) return;
+        if (_doc is null) { MessageBox.Show("Importez d’abord un modèle sur lequel appliquer ce style."); return; }
+        await ApplyStyle(dialog.SelectedStyle);
+    }
+
+    async Task ApplyStyle(PolyStyleData style)
+    {
+        if (_doc is null || _selected is null) return;
+        PushUndo();
+        var proposalIndex = SelectedProposalIndex();
+        _colorCount = style.Colors.Count;
+        _settings.ColorCount = _colorCount;
+        for (var index = 0; index < style.Colors.Count; index++)
+        {
+            var color = new PaletteColor($"Style {index + 1}", style.Colors[index]);
+            if (index < _selected.Colors.Count) _selected.Colors[index] = color; else _selected.Colors.Add(color);
+        }
+        if (_selected.Colors.Count > style.Colors.Count) _selected.Colors.RemoveRange(style.Colors.Count, _selected.Colors.Count - style.Colors.Count);
+        if (proposalIndex < _layerBases.Count)
+        {
+            _layerBases[proposalIndex].Colors.Clear();
+            _layerBases[proposalIndex].Colors.AddRange(_selected.Colors.Select(color => new PaletteColor(color.Name, color.Hex)));
+        }
+        if (style.Pattern is not null)
+        {
+            SetBusy(true, "Application du style et subdivision locale…");
+            try
+            {
+                var geometry = await Task.Run(() => _patternGeometryService.Build(_doc, _proposals, style.Pattern,
+                    Enumerable.Repeat(style.Pattern.Mode, _proposals.Count).ToArray(), targetProposals: new HashSet<int> { proposalIndex }));
+                _doc = geometry.Document; _proposals = geometry.Proposals; _pattern = style.Pattern;
+                _layerBases = geometry.BaseProposals.Select(Clone).ToList();
+                _proposalLayers = _proposals.Select((proposal, index) => new List<ColorLayer>
+                {
+                    _layerService.Create("Couleur de base", ColorLayerKind.BaseColor),
+                    CreateDifferenceLayer("Motif du style", ColorLayerKind.Image, _layerBases[index], proposal, style.Pattern)
+                }).ToList();
+            }
+            finally { SetBusy(false); }
+        }
+        SelectProposal(proposalIndex); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText();
+        ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS";
+        _dirty = true; StatusText.Text = $"Style « {style.Name} » appliqué.";
     }
 
     internal static Dictionary<int, PreviewMesh> BuildPreviewMeshes(ModelDocument document)
