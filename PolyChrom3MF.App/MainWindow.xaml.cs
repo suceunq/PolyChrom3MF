@@ -647,8 +647,6 @@ public partial class MainWindow : Window
         LayerVisible.IsEnabled = LayerLocked.IsEnabled = layer is not null;
         LayerVisible.IsChecked = layer?.IsVisible ?? false;
         LayerLocked.IsChecked = layer?.IsLocked ?? false;
-        LayerOpacity.IsEnabled = layer is not null;
-        LayerOpacity.Value = (layer?.PreviewOpacity ?? 1) * 100;
     }
 
     void AddLayer_Click(object sender, RoutedEventArgs e)
@@ -787,16 +785,6 @@ public partial class MainWindow : Window
         RecomposeSelected();
         RefreshLayers();
         _dirty = true;
-    }
-
-    void LayerOpacity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_loadingControls) return;
-        var proposal = SelectedProposalIndex(); var layer = SelectedLayer();
-        if (proposal < 0 || layer is null) return;
-        var index = _proposalLayers[proposal].FindIndex(item => item.Id == layer.Id);
-        _proposalLayers[proposal][index] = layer with { PreviewOpacity = Math.Clamp(e.NewValue / 100d, 0, 1) };
-        _layerPreviewTimer.Stop(); _layerPreviewTimer.Start(); _dirty = true;
     }
 
     async void PaintMode_Changed(object sender, RoutedEventArgs e)
