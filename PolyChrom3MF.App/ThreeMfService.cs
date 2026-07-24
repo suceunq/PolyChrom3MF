@@ -70,7 +70,7 @@ public sealed class ThreeMfService
 
     public string ExportAndValidate(ModelDocument document, ColorProposal proposal, string destination, bool verify)
     {
-        if (proposal.Colors.Count is < 4 or > 32) throw new InvalidDataException("Une proposition doit contenir entre quatre et trente-deux couleurs.");
+        if (proposal.Colors.Count is < 2 or > 32) throw new InvalidDataException("Une proposition doit contenir entre deux et trente-deux couleurs.");
         var fullDestination = Path.GetFullPath(destination);
         if (!fullDestination.EndsWith(".3mf", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("L’export doit porter l’extension .3mf.");
         var destinationFolder = Path.GetDirectoryName(fullDestination)!;

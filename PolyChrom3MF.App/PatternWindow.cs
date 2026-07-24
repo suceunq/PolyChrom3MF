@@ -28,6 +28,7 @@ public sealed class PatternWindow : Window
     readonly CheckBox _variants = new() { Content = new TextBlock { Text = "Créer quatre propositions avec quatre projections différentes", TextWrapping = TextWrapping.Wrap }, IsChecked = true };
     readonly CheckBox _monochromeLogo = new() { Content = new TextBlock { Text = "Mode logo monochrome — conserver uniquement les formes du logo", TextWrapping = TextWrapping.Wrap } };
     readonly CheckBox _invertLogo = new() { Content = new TextBlock { Text = "Logo sombre sur fond clair (inverser noir/blanc)", TextWrapping = TextWrapping.Wrap } };
+    readonly CheckBox _repeatAcrossModel = new() { Content = new TextBlock { Text = "Répéter le motif pour couvrir toute la pièce", TextWrapping = TextWrapping.Wrap }, IsChecked = true };
     readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     readonly TextBlock _previewStatus = new() { Text = "L’aperçu se met à jour au relâchement du curseur.", Margin = new Thickness(0, 7, 0, 0) };
 
@@ -46,12 +47,14 @@ public sealed class PatternWindow : Window
         _logoColor.ItemsSource = logoColors; _logoColor.DisplayMemberPath = nameof(Option<int>.Label); _logoColor.SelectedIndex = Math.Clamp(Value.LogoColorIndex, 0, Math.Max(0, logoColors.Count - 1));
         _scale.Value = Value.Scale; _rotation.Value = Value.Rotation; _offsetX.Value = Value.OffsetX; _offsetY.Value = Value.OffsetY; _variants.IsChecked = Value.FourVariants;
         _monochromeLogo.IsChecked = Value.MonochromeLogo; _invertLogo.IsChecked = Value.InvertLogo; _logoThreshold.Value = Value.LogoThreshold;
+        _repeatAcrossModel.IsChecked = Value.RepeatAcrossModel;
         _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); Value = ReadSettings(); PreviewRequested?.Invoke(Value); };
         _mode.SelectionChanged += (_, _) => QueuePreview(); _target.SelectionChanged += (_, _) => QueuePreview(); _logoColor.SelectionChanged += (_, _) => QueuePreview();
         TrackSlider(_scale); TrackSlider(_rotation); TrackSlider(_offsetX); TrackSlider(_offsetY); TrackSlider(_logoThreshold);
         _variants.Checked += (_, _) => QueuePreview(); _variants.Unchecked += (_, _) => QueuePreview();
         _monochromeLogo.Checked += (_, _) => { UpdateLogoControls(); QueuePreview(); }; _monochromeLogo.Unchecked += (_, _) => { UpdateLogoControls(); QueuePreview(); };
         _invertLogo.Checked += (_, _) => QueuePreview(); _invertLogo.Unchecked += (_, _) => QueuePreview();
+        _repeatAcrossModel.Checked += (_, _) => QueuePreview(); _repeatAcrossModel.Unchecked += (_, _) => QueuePreview();
         Loaded += (_, _) => QueuePreview();
         Closed += (_, _) => _previewTimer.Stop();
 
@@ -61,7 +64,7 @@ public sealed class PatternWindow : Window
         panel.Children.Add(new TextBlock { Text = "Aperçu en direct : déplacez les curseurs pour voir le résultat sur la figurine derrière cette fenêtre.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), FontWeight = FontWeights.SemiBold, Foreground = (System.Windows.Media.Brush)Application.Current.Resources["Accent"] });
         var preview = new Image { Source = LoadPreview(imagePath), Height = 190, Stretch = System.Windows.Media.Stretch.Uniform, Margin = new Thickness(0, 0, 0, 14) };
         panel.Children.Add(new Border { Background = (System.Windows.Media.Brush)Application.Current.Resources["InputBackground"], BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["PanelBorder"], BorderThickness = new Thickness(1), Padding = new Thickness(8), Child = preview });
-        panel.Children.Add(Field("Application", _target)); panel.Children.Add(Field("Projection", _mode)); panel.Children.Add(_variants);
+        panel.Children.Add(Field("Application", _target)); panel.Children.Add(Field("Projection", _mode)); panel.Children.Add(_repeatAcrossModel); panel.Children.Add(_variants);
         var logoPanel = new StackPanel { Margin = new Thickness(0, 12, 0, 2) };
         logoPanel.Children.Add(_monochromeLogo);
         logoPanel.Children.Add(new TextBlock { Text = "Le fond et les autres pixels conservent la couleur actuelle du modèle. Idéal pour des symboles ou des logos noirs et blancs.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(22, 4, 0, 5), Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"] });
@@ -99,7 +102,8 @@ public sealed class PatternWindow : Window
         MonochromeLogo: _monochromeLogo.IsChecked == true,
         LogoColorIndex: ((Option<int>?)_logoColor.SelectedItem)?.Value ?? 0,
         InvertLogo: _invertLogo.IsChecked == true,
-        LogoThreshold: (byte)Math.Round(_logoThreshold.Value));
+        LogoThreshold: (byte)Math.Round(_logoThreshold.Value),
+        RepeatAcrossModel: _repeatAcrossModel.IsChecked == true);
 
     void UpdateLogoControls()
     {

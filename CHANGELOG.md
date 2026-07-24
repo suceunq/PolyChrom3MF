@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.4
+
+- Nouvelle option activée par défaut pour répéter le motif et couvrir toute la pièce, même sur les figurines composées de nombreuses parties.
+- Modification directe de chaque couleur d’une proposition par clic droit sur sa pastille.
+- Nombre de couleurs désormais réglable de 2 à 32 dans les propositions, les projets et l’export 3MF.
+
 ## 1.7.3
 
 - Nouveau mode « Logo monochrome » pour conserver uniquement la forme d’un symbole noir ou blanc et laisser le reste du modèle inchangé.

@@ -31,13 +31,13 @@ public sealed class PaletteService
     ];
 
     static readonly string[] Names = ["Proposition 1 — Équilibrée", "Proposition 2 — Contrastée", "Proposition 3 — Sobre", "Proposition 4 — Créative"];
-    static readonly string[] Descriptions = ["Quatre zones harmonieuses", "Quatre zones fortement contrastées", "Quatre zones neutres et élégantes", "Quatre zones originales et expressives"];
+    static readonly string[] Descriptions = ["Zones harmonieuses", "Zones fortement contrastées", "Zones neutres et élégantes", "Zones originales et expressives"];
     static readonly string[] FunNames = ["Fun 1 — Aurore ondulée", "Fun 2 — Camouflage organique", "Fun 3 — Double personnalité", "Fun 4 — Graffiti pop"];
     static readonly string[] FunDescriptions = ["Dégradé vivant aux frontières ondulées", "Taches organiques réparties sur toute la sculpture", "Séparation dramatique avec accents contrastés", "Réseau de lignes et symboles abstraits"];
 
     public List<ColorProposal> Create(int objectCount, IReadOnlyList<string>? available = null, int generation = 0, bool fun = false, int colorCount = 4)
     {
-        colorCount = Math.Clamp(colorCount, 4, 32);
+        colorCount = Math.Clamp(colorCount, 2, 32);
         var result = new List<ColorProposal>(4);
         for (var style = 0; style < 4; style++)
         {
@@ -53,7 +53,7 @@ public sealed class PaletteService
 
     public List<ColorProposal> Create(ModelDocument document, IReadOnlyList<string>? available = null, int generation = 0, bool fun = false, int colorCount = 4)
     {
-        colorCount = Math.Clamp(colorCount, 4, 32);
+        colorCount = Math.Clamp(colorCount, 2, 32);
         var proposals = Create(document.Objects.Count, available, generation, fun, colorCount);
         for (var style = 0; style < proposals.Count; style++)
         {
