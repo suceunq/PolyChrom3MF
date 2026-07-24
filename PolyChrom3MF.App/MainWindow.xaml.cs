@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     readonly StlService _stlService = new();
     readonly PaletteService _palettes = new();
     readonly PatternService _patternService = new();
+    readonly PatternGeometryService _patternGeometryService = new();
     readonly SmartSelectionService _smartSelection = new();
     readonly ProjectService _projects = new();
     readonly SettingsService _settingsService = new();
@@ -40,6 +41,7 @@ public partial class MainWindow : Window
     AppSettings _settings;
     readonly bool _settingsExistedAtStartup;
     ModelDocument? _doc;
+    ModelDocument? _beforePatternDocument;
     Dictionary<int, PreviewMesh> _previewMeshes = [];
     List<ColorProposal> _proposals = [];
     List<ColorProposal>? _beforePatternProposals;
@@ -106,7 +108,7 @@ public partial class MainWindow : Window
                 _previewMeshes = await Task.Run(() => BuildPreviewMeshes(_doc));
             }
             else _previewMeshes.Clear();
-            _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
+            _pattern = null; _beforePatternProposals = null; _beforePatternDocument = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
             _lastSlicerFile = path; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             FileText.Text = Path.GetFileName(path);
             var displayedTriangles = _doc.Objects.Sum(obj => _previewMeshes.TryGetValue(obj.Index, out var preview) ? (long)preview.Triangles.Count : obj.Triangles.Count);
@@ -374,34 +376,37 @@ public partial class MainWindow : Window
         }
         PushUndo();
         var previousBeforePattern = _beforePatternProposals;
+        var previousBeforePatternDocument = _beforePatternDocument;
+        _beforePatternDocument ??= _doc;
         _beforePatternProposals ??= _proposals.Select(Clone).ToList();
         var working = _beforePatternProposals.Select(Clone).ToList();
         var settings = dialog.Value;
         SetBusy(true, "Application du motif image sur les triangles…");
         try
         {
-            var results = await Task.Run(() =>
+            var geometry = await Task.Run(() =>
             {
-                var list = new List<PatternApplyResult>();
-                if (settings.FourVariants)
-                {
-                    var modes = new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar };
-                    for (var i = 0; i < Math.Min(working.Count, modes.Length); i++)
-                    {
-                        list.Add(_patternService.Apply(_doc, working[i], settings, modes[i]));
-                        working[i] = Rename(working[i], $"Image {i + 1} — {PatternModeName(modes[i])}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(modes[i]).ToLowerInvariant()}");
-                    }
-                }
-                else { list.Add(_patternService.Apply(_doc, working[selectedIndex], settings)); working[selectedIndex] = Rename(working[selectedIndex], $"Image — {PatternModeName(settings.Mode)}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(settings.Mode).ToLowerInvariant()}"); }
-                return list;
+                var modes = settings.FourVariants
+                    ? new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar }
+                    : Enumerable.Repeat(settings.Mode, working.Count).ToArray();
+                IReadOnlySet<int>? targets = settings.FourVariants ? null : new HashSet<int> { selectedIndex };
+                return _patternGeometryService.Build(_beforePatternDocument, working, settings, modes, targetProposals: targets);
             });
-            _proposals = working; _pattern = settings; SelectProposal(selectedIndex); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true;
-            var count = results.Sum(result => result.ColoredTriangles);
-            StatusText.Text = $"Motif image appliqué sur {count:N0} triangles avec {_colorCount} couleurs imprimables.";
+            _doc = geometry.Document;
+            _proposals = geometry.Proposals;
+            var modesForNames = new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar };
+            if (settings.FourVariants)
+                for (var i = 0; i < _proposals.Count; i++) _proposals[i] = Rename(_proposals[i], $"Image {i + 1} — {PatternModeName(modesForNames[i])}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(modesForNames[i]).ToLowerInvariant()}");
+            else _proposals[selectedIndex] = Rename(_proposals[selectedIndex], $"Image — {PatternModeName(settings.Mode)}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(settings.Mode).ToLowerInvariant()}");
+            _pattern = settings; SelectProposal(selectedIndex); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true;
+            StatusText.Text = geometry.AddedTriangles > 0
+                ? $"Motif haute précision · {geometry.AddedTriangles:N0} triangles ajoutés localement (niveau {geometry.Levels})."
+                : "Motif appliqué : le maillage est déjà assez détaillé.";
         }
         catch (Exception ex)
         {
             _beforePatternProposals = previousBeforePattern;
+            _beforePatternDocument = previousBeforePatternDocument;
             MessageBox.Show(ex.Message, "Motif image impossible à appliquer", MessageBoxButton.OK, MessageBoxImage.Error);
             StatusText.Text = "Échec de l’application du motif image.";
         }
@@ -456,7 +461,8 @@ public partial class MainWindow : Window
         PushUndo(); var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected!));
         if (_beforePatternProposals is not null) _proposals = _beforePatternProposals.Select(Clone).ToList();
         else { _generation++; GenerateProposals(); }
-        _pattern = null; _beforePatternProposals = null; SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif image retiré.";
+        if (_beforePatternDocument is not null) _doc = _beforePatternDocument;
+        _pattern = null; _beforePatternProposals = null; _beforePatternDocument = null; SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif image retiré.";
     }
 
     static ColorProposal Rename(ColorProposal proposal, string name, string description) => new(name, description, proposal.Colors.Select(color => new PaletteColor(color.Name, color.Hex)).ToList(), new Dictionary<int, int>(proposal.Assignments)) { TriangleAssignments = proposal.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
@@ -733,9 +739,9 @@ public partial class MainWindow : Window
     bool ConfirmDiscard() => !_dirty || MessageBox.Show("Les modifications non enregistrées seront perdues. Continuer ?", "PolyChrom 3MF", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
 
     void PushUndo() { if (_proposals.Count == 0) return; _undo.Push(Capture()); _redo.Clear(); }
-    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList(), _pattern);
+    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList(), _pattern, _doc);
     static ColorProposal Clone(ColorProposal p) => new(p.Name, p.Description, p.Colors.Select(c => new PaletteColor(c.Name, c.Hex)).ToList(), new Dictionary<int, int>(p.Assignments)) { TriangleAssignments = p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
-    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _beforePatternProposals = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); SelectProposal(state.Selected); RefreshBindings(); Render(); _dirty = true; }
+    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _doc = state.Document; _beforePatternProposals = null; _beforePatternDocument = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); SelectProposal(state.Selected); RefreshBindings(); ComputeBounds(); Render(); _dirty = true; }
     void Undo_Click(object sender, RoutedEventArgs e) { if (_undo.Count == 0) return; _redo.Push(Capture()); Restore(_undo.Pop()); StatusText.Text = "Modification annulée."; }
     void Redo_Click(object sender, RoutedEventArgs e) { if (_redo.Count == 0) return; _undo.Push(Capture()); Restore(_redo.Pop()); StatusText.Text = "Modification rétablie."; }
     void RefreshBindings() { Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals; ObjectColorCombo.ItemsSource = null; ObjectColorCombo.ItemsSource = _selected?.Colors; PaintColorCombo.ItemsSource = null; PaintColorCombo.ItemsSource = _selected?.Colors; if (_selected is not null && _selected.Colors.Count > 0) PaintColorCombo.SelectedIndex = 0; }
@@ -1390,5 +1396,5 @@ public partial class MainWindow : Window
     void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 
-    sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern);
+    sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern, ModelDocument? Document);
 }

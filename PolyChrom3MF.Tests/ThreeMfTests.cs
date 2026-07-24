@@ -263,6 +263,19 @@ public class ThreeMfTests
         Assert.Equal([0], service.SimilarFaces(obj, 0, 20, false).ToArray());
         Assert.Equal([1], service.ByColor(obj, proposal, 1).ToArray());
     }
+    [Fact] public void Motif_haute_precision_produit_un_maillage_derive_exportable()
+    {
+        var document = FunDocument();
+        var proposals = new PaletteService().Create(document);
+        var settings = new PatternSettings(Png(), PatternMode.Front, RepeatAcrossModel: true);
+        var result = new PatternGeometryService().Build(document, proposals, settings, [PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar]);
+        Assert.True(result.Document.IsDerived);
+        Assert.True(result.Document.TriangleCount > document.TriangleCount);
+        Assert.Equal(result.Document.Objects[0].Triangles.Count, result.Proposals[0].TriangleAssignments[0].Length);
+        var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf");
+        new ThreeMfService().ExportAndValidate(result.Document, result.Proposals[0], output, true);
+        Assert.Equal(result.Document.TriangleCount, new ThreeMfService().Read(output).TriangleCount);
+    }
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }
     [Fact] public void Convertit_stl_en_3mf_valide() { var d = new StlService().Read(AsciiStl()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); new ThreeMfService().Export(d, new PaletteService().Create(1)[0], output); Assert.Equal(1, new ThreeMfService().Read(output).TriangleCount); }

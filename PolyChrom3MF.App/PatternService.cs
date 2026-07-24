@@ -23,11 +23,14 @@ public sealed record PatternSettings(
     byte LogoThreshold = 128,
     bool RepeatAcrossModel = true);
 
-public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTriangles);
+public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTriangles)
+{
+    public Dictionary<int, HashSet<int>> RefinementTriangles { get; init; } = [];
+}
 
 public sealed class PatternService
 {
-    public PatternApplyResult Apply(ModelDocument document, ColorProposal proposal, PatternSettings settings, PatternMode? modeOverride = null, CancellationToken cancellationToken = default)
+    public PatternApplyResult Apply(ModelDocument document, ColorProposal proposal, PatternSettings settings, PatternMode? modeOverride = null, CancellationToken cancellationToken = default, bool collectRefinement = false)
     {
         ValidateSettings(settings);
         cancellationToken.ThrowIfCancellationRequested();
@@ -42,6 +45,7 @@ public sealed class PatternService
         var mode = modeOverride ?? settings.Mode;
         var bounds = Bounds(document);
         var colored = 0; var transparent = 0;
+        var refinement = new Dictionary<int, HashSet<int>>();
         foreach (var obj in document.Objects)
         {
             if (settings.TargetObject >= 0 && obj.Index != settings.TargetObject) continue;
@@ -56,29 +60,44 @@ public sealed class PatternService
                 if ((triangleIndex & 8191) == 0) cancellationToken.ThrowIfCancellationRequested();
                 var triangle = obj.Triangles[triangleIndex];
                 var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
-                var x = (a.X + b.X + c.X) / 3; var y = (a.Y + b.Y + c.Y) / 3; var z = (a.Z + b.Z + c.Z) / 3;
-                var (u, v, repeats) = Coordinates(mode, x, y, z, a, b, c, bounds);
-                (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
-                (u, v) = Transform(u, v, settings, repeats);
-                if (!repeats && (u < 0 || u > 1 || v < 0 || v > 1)) { transparent++; continue; }
-                u = repeats ? Wrap(u) : Math.Clamp(u, 0, 1);
-                v = repeats ? Wrap(v) : Math.Clamp(v, 0, 1);
-                var pixel = image.Pixel(u, v);
-                if (pixel.A < settings.AlphaThreshold) { transparent++; continue; }
-                if (settings.MonochromeLogo)
+                int? Classify(double x, double y, double z)
                 {
+                    var (u, v, repeats) = Coordinates(mode, x, y, z, a, b, c, bounds);
+                    (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
+                    (u, v) = Transform(u, v, settings, repeats);
+                    if (!repeats && (u < 0 || u > 1 || v < 0 || v > 1)) return null;
+                    u = repeats ? Wrap(u) : Math.Clamp(u, 0, 1);
+                    v = repeats ? Wrap(v) : Math.Clamp(v, 0, 1);
+                    var pixel = image.Pixel(u, v);
+                    if (pixel.A < settings.AlphaThreshold) return null;
+                    if (!settings.MonochromeLogo) return Nearest(pixel, palette);
                     if (!IsLogoPixel(pixel.R, pixel.G, pixel.B, settings.LogoThreshold, settings.InvertLogo))
-                    {
-                        transparent++;
-                        continue;
-                    }
-                    assignments[triangleIndex] = settings.LogoColorIndex;
+                        return null;
+                    return settings.LogoColorIndex;
                 }
-                else assignments[triangleIndex] = Nearest(pixel, palette);
-                colored++;
+
+                var center = Classify((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
+                if (collectRefinement)
+                {
+                    var samples = new HashSet<int?>
+                    {
+                        center,
+                        Classify(a.X, a.Y, a.Z), Classify(b.X, b.Y, b.Z), Classify(c.X, c.Y, c.Z),
+                        Classify((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2),
+                        Classify((b.X + c.X) / 2, (b.Y + c.Y) / 2, (b.Z + c.Z) / 2),
+                        Classify((c.X + a.X) / 2, (c.Y + a.Y) / 2, (c.Z + a.Z) / 2)
+                    };
+                    if (samples.Count > 1)
+                    {
+                        if (!refinement.TryGetValue(obj.Index, out var triangles)) refinement[obj.Index] = triangles = [];
+                        triangles.Add(triangleIndex);
+                    }
+                }
+                if (center is int colorIndex) { assignments[triangleIndex] = colorIndex; colored++; }
+                else transparent++;
             }
         }
-        return new PatternApplyResult(colored, transparent);
+        return new PatternApplyResult(colored, transparent) { RefinementTriangles = refinement };
     }
 
     public static void ValidateSettings(PatternSettings settings)

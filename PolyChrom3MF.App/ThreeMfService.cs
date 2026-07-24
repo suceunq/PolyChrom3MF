@@ -78,7 +78,7 @@ public sealed class ThreeMfService
         var workingDestination = Path.Combine(destinationFolder, $".{Path.GetFileNameWithoutExtension(fullDestination)}.{Guid.NewGuid():N}.tmp.3mf");
         try
         {
-        if (document.SourceFormat == "STL") CreatePackage(workingDestination, BuildStlModel(document));
+        if (document.SourceFormat == "STL" || document.IsDerived) CreatePackage(workingDestination, BuildStlModel(document));
         else File.Copy(document.Path, workingDestination, true);
 
         using (var zip = ZipFile.Open(workingDestination, ZipArchiveMode.Update))
@@ -148,8 +148,10 @@ public sealed class ThreeMfService
     {
         var resources = new XElement(Core + "resources");
         var build = new XElement(Core + "build");
-        foreach (var modelObject in document.Objects)
+        for (var objectIndex = 0; objectIndex < document.Objects.Count; objectIndex++)
         {
+            var modelObject = document.Objects[objectIndex];
+            var objectId = (objectIndex + 1).ToString(CultureInfo.InvariantCulture);
             var mesh = new XElement(Core + "mesh",
                 new XElement(Core + "vertices", modelObject.Vertices.Select(vertex => new XElement(Core + "vertex",
                     new XAttribute("x", vertex.X.ToString("R", CultureInfo.InvariantCulture)),
@@ -157,8 +159,8 @@ public sealed class ThreeMfService
                     new XAttribute("z", vertex.Z.ToString("R", CultureInfo.InvariantCulture))))),
                 new XElement(Core + "triangles", modelObject.Triangles.Select(triangle => new XElement(Core + "triangle",
                     new XAttribute("v1", triangle.A), new XAttribute("v2", triangle.B), new XAttribute("v3", triangle.C)))));
-            resources.Add(new XElement(Core + "object", new XAttribute("id", modelObject.Id), new XAttribute("type", "model"), mesh));
-            build.Add(new XElement(Core + "item", new XAttribute("objectid", modelObject.Id)));
+            resources.Add(new XElement(Core + "object", new XAttribute("id", objectId), new XAttribute("type", "model"), mesh));
+            build.Add(new XElement(Core + "item", new XAttribute("objectid", objectId)));
         }
         return new XDocument(new XElement(Core + "model",
             new XAttribute("unit", "millimeter"),
@@ -326,7 +328,7 @@ public sealed record ModelObject(int Index, string Id, List<Vertex> Vertices, Li
 {
     public override string ToString() => $"Objet {Id} — {Triangles.Count:N0} triangles";
 }
-public sealed record ModelDocument(string Path, XDocument Xml, string ModelEntry, List<ModelObject> Objects, double SizeX, double SizeY, double SizeZ, List<string> Entries, long TriangleCount, string? Warning, string Unit, int ComponentCount, int ExistingColorCount, string SourceFormat);
+public sealed record ModelDocument(string Path, XDocument Xml, string ModelEntry, List<ModelObject> Objects, double SizeX, double SizeY, double SizeZ, List<string> Entries, long TriangleCount, string? Warning, string Unit, int ComponentCount, int ExistingColorCount, string SourceFormat, bool IsDerived = false);
 public sealed record PaletteColor(string Name, string Hex)
 {
     public System.Windows.Media.Color Color => (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(Hex)!;

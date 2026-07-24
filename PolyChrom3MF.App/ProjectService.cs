@@ -14,7 +14,15 @@ public sealed class ProjectService
     public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null)
     {
         if (!File.Exists(document.Path)) throw new FileNotFoundException("Le modèle 3D source est introuvable.", document.Path);
-        var extension = Path.GetExtension(document.Path).ToLowerInvariant();
+        string? derivedSnapshot = null;
+        var modelSource = document.Path;
+        if (document.IsDerived)
+        {
+            derivedSnapshot = Path.Combine(Path.GetTempPath(), $"PolyChrom-derived-{Guid.NewGuid():N}.3mf");
+            new ThreeMfService().ExportAndValidate(document, proposals[Math.Clamp(selected, 0, proposals.Count - 1)], derivedSnapshot, false);
+            modelSource = derivedSnapshot;
+        }
+        var extension = Path.GetExtension(modelSource).ToLowerInvariant();
         if (extension is not ".3mf" and not ".stl") throw new InvalidDataException("Le modèle du projet doit être un fichier 3MF ou STL.");
         var modelName = SafeFileName(Path.GetFileNameWithoutExtension(document.Path)) + extension;
         var modelEntryName = "model/" + modelName;
@@ -41,7 +49,7 @@ public sealed class ProjectService
                 var settings = archive.CreateEntry("project.json", CompressionLevel.Optimal);
                 using (var stream = settings.Open()) JsonSerializer.Serialize(stream, data);
                 var model = archive.CreateEntry(modelEntryName, extension == ".3mf" ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
-                using (var source = new FileStream(document.Path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var source = new FileStream(modelSource, FileMode.Open, FileAccess.Read, FileShare.Read))
                 using (var destination = model.Open()) source.CopyTo(destination);
                 if (pattern is not null)
                 {
@@ -56,6 +64,10 @@ public sealed class ProjectService
         {
             try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
             throw;
+        }
+        finally
+        {
+            try { if (derivedSnapshot is not null && File.Exists(derivedSnapshot)) File.Delete(derivedSnapshot); } catch { }
         }
     }
 
