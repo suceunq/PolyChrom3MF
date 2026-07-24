@@ -256,7 +256,7 @@ public partial class MainWindow : Window
         if (_doc is null) return;
         var index = SelectedProposalIndex();
         if (index < 0 || index >= _layerBases.Count || index >= _proposalLayers.Count) return;
-        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index], previewOpacity: true);
+        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index], previewOpacity: false);
         _proposals[index] = Rename(composed, _selected!.Name, _selected.Description);
         _selected = _proposals[index];
         RefreshBindings();

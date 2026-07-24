@@ -84,14 +84,10 @@ public sealed class GpuViewportHost : Grid, IDisposable
                     });
             }
             if (_viewport.Camera is not DxPerspectiveCamera camera) return;
-            camera.Position = new System.Windows.Media.Media3D.Point3D(center.X + radius * 2.2, center.Y - radius * 2.2, center.Z + radius * 1.4);
-            camera.LookDirection = center - camera.Position;
-            camera.UpDirection = new System.Windows.Media.Media3D.Vector3D(0, 0, 1);
             camera.NearPlaneDistance = Math.Max(.01, radius / 1000);
             camera.FarPlaneDistance = Math.Max(1000, radius * 20);
             _viewport.FixedRotationPoint = center;
             _viewport.FixedRotationPointEnabled = true;
-            _viewport.ZoomExtents();
         }
         catch (OperationCanceledException) { }
         catch
