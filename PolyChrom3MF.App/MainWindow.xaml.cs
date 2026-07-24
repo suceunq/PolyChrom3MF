@@ -256,7 +256,7 @@ public partial class MainWindow : Window
         if (_doc is null) return;
         var index = SelectedProposalIndex();
         if (index < 0 || index >= _layerBases.Count || index >= _proposalLayers.Count) return;
-        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index], previewOpacity: OpaquePreview?.IsChecked != true);
+        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index], previewOpacity: true);
         _proposals[index] = Rename(composed, _selected!.Name, _selected.Description);
         _selected = _proposals[index];
         RefreshBindings();
@@ -797,14 +797,6 @@ public partial class MainWindow : Window
         var index = _proposalLayers[proposal].FindIndex(item => item.Id == layer.Id);
         _proposalLayers[proposal][index] = layer with { PreviewOpacity = Math.Clamp(e.NewValue / 100d, 0, 1) };
         _layerPreviewTimer.Stop(); _layerPreviewTimer.Start(); _dirty = true;
-    }
-
-    void OpaquePreview_Changed(object sender, RoutedEventArgs e)
-    {
-        if (_loadingControls || _doc is null) return;
-        RecomposeSelected();
-        RecenterView();
-        _dirty = true;
     }
 
     async void PaintMode_Changed(object sender, RoutedEventArgs e)
