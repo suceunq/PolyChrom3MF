@@ -64,6 +64,18 @@
           <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" MaxWidth="250">
             <Button Click="ViewIso_Click" Content="Iso" Margin="2"/><Button Click="ViewFront_Click" Content="Face" Margin="2"/><Button Click="ViewTop_Click" Content="Dessus" Margin="2"/><Button Click="ToggleGrid_Click" Content="Plateau" Margin="2"/><Button Click="Fit_Click" Content="Recentrer" Margin="2"/>
           </WrapPanel>
+          <Border x:Name="PatternTransformPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="12,12,12,48" Padding="8" CornerRadius="8" Background="#E62B313C" BorderBrush="#58AFFF" BorderThickness="1">
+            <StackPanel>
+              <TextBlock Text="TRANSFORMER LE MOTIF DANS LA VUE 3D" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,5"/>
+              <WrapPanel HorizontalAlignment="Center">
+                <Button Tag="left" Click="PatternTransform_Click" Content="←"/><Button Tag="right" Click="PatternTransform_Click" Content="→"/><Button Tag="up" Click="PatternTransform_Click" Content="↑"/><Button Tag="down" Click="PatternTransform_Click" Content="↓"/>
+                <Button Tag="rotateleft" Click="PatternTransform_Click" Content="↶"/><Button Tag="rotateright" Click="PatternTransform_Click" Content="↷"/>
+                <Button Tag="smaller" Click="PatternTransform_Click" Content="− Taille"/><Button Tag="larger" Click="PatternTransform_Click" Content="+ Taille"/>
+                <Button Tag="mirrorx" Click="PatternTransform_Click" Content="Miroir ↔"/><Button Tag="mirrory" Click="PatternTransform_Click" Content="Miroir ↕"/>
+                <Button Tag="copy" Click="PatternTransform_Click" Content="+ Copie"/>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
           <Border x:Name="ActivityOverlay"
                   Panel.ZIndex="20"
                   Visibility="Collapsed"

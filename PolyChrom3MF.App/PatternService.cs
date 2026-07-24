@@ -21,7 +21,14 @@ public sealed record PatternSettings(
     int LogoColorIndex = 0,
     bool InvertLogo = false,
     byte LogoThreshold = 128,
-    bool RepeatAcrossModel = true);
+    bool RepeatAcrossModel = true,
+    double StretchX = 100,
+    double StretchY = 100,
+    int Copies = 1,
+    double Spacing = 0,
+    bool MirrorX = false,
+    bool MirrorY = false,
+    bool BackFacePreview = true);
 
 public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTriangles)
 {
@@ -102,7 +109,7 @@ public sealed class PatternService
 
     public static void ValidateSettings(PatternSettings settings)
     {
-        if (settings is null || string.IsNullOrWhiteSpace(settings.ImagePath) || settings.ImagePath.Length > 1024 || !Enum.IsDefined(settings.Mode) || !double.IsFinite(settings.Scale) || settings.Scale is < 10 or > 400 || !double.IsFinite(settings.Rotation) || settings.Rotation is < -180 or > 180 || !double.IsFinite(settings.OffsetX) || settings.OffsetX is < -200 or > 200 || !double.IsFinite(settings.OffsetY) || settings.OffsetY is < -200 or > 200 || settings.TargetObject < -1 || settings.DisplayName?.Length > 260 || settings.DisplayName?.Any(char.IsControl) == true || settings.LogoColorIndex is < 0 or > 31 || settings.LogoThreshold is < 1 or > 254)
+        if (settings is null || string.IsNullOrWhiteSpace(settings.ImagePath) || settings.ImagePath.Length > 1024 || !Enum.IsDefined(settings.Mode) || !double.IsFinite(settings.Scale) || settings.Scale is < 10 or > 400 || !double.IsFinite(settings.Rotation) || settings.Rotation is < -180 or > 180 || !double.IsFinite(settings.OffsetX) || settings.OffsetX is < -200 or > 200 || !double.IsFinite(settings.OffsetY) || settings.OffsetY is < -200 or > 200 || settings.TargetObject < -1 || settings.DisplayName?.Length > 260 || settings.DisplayName?.Any(char.IsControl) == true || settings.LogoColorIndex is < 0 or > 31 || settings.LogoThreshold is < 1 or > 254 || !double.IsFinite(settings.StretchX) || settings.StretchX is < 10 or > 400 || !double.IsFinite(settings.StretchY) || settings.StretchY is < 10 or > 400 || settings.Copies is < 1 or > 32 || !double.IsFinite(settings.Spacing) || settings.Spacing is < 0 or > 300)
             throw new InvalidDataException("Les réglages du motif image sont invalides.");
     }
 
@@ -230,12 +237,20 @@ public sealed class PatternService
 
     static (double U, double V) Transform(double u, double v, PatternSettings settings, bool repeats)
     {
-        var coverage = settings.Scale / 100d;
-        u = (u - .5) / coverage + .5 + settings.OffsetX / 100d;
-        v = (v - .5) / coverage + .5 - settings.OffsetY / 100d;
+        var coverageX = settings.Scale / 100d * settings.StretchX / 100d;
+        var coverageY = settings.Scale / 100d * settings.StretchY / 100d;
+        u = (u - .5) / coverageX + .5 + settings.OffsetX / 100d;
+        v = (v - .5) / coverageY + .5 - settings.OffsetY / 100d;
         var radians = settings.Rotation * Math.PI / 180; var cos = Math.Cos(radians); var sin = Math.Sin(radians);
         var x = u - .5; var y = v - .5;
         u = x * cos - y * sin + .5; v = x * sin + y * cos + .5;
+        if (settings.Copies > 1)
+        {
+            var period = 1 + settings.Spacing / 100d;
+            u = u * settings.Copies / period;
+        }
+        if (settings.MirrorX) u = 1 - u;
+        if (settings.MirrorY) v = 1 - v;
         return (u, v);
     }
 

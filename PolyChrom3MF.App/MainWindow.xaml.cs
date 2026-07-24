@@ -575,7 +575,53 @@ public partial class MainWindow : Window
         return layer;
     }
     static string PatternModeName(PatternMode mode) => mode switch { PatternMode.Front => "Projection frontale", PatternMode.Cylindrical => "Enveloppement", PatternMode.Repeated => "Motif répété", _ => "Triplanaire" };
-    void UpdatePatternText() { if (PatternText is null) return; PatternText.Text = _pattern is null ? "Aucun motif importé" : $"{(_pattern.DisplayName ?? Path.GetFileName(_pattern.ImagePath))} · {(_pattern.FourVariants ? "4 projections" : PatternModeName(_pattern.Mode))} · taille {_pattern.Scale:0}%"; }
+    void UpdatePatternText() { if (PatternText is null) return; PatternText.Text = _pattern is null ? "Aucun motif importé" : $"{(_pattern.DisplayName ?? Path.GetFileName(_pattern.ImagePath))} · {(_pattern.FourVariants ? "4 projections" : PatternModeName(_pattern.Mode))} · taille {_pattern.Scale:0}%"; if (PatternTransformPanel is not null) PatternTransformPanel.Visibility = _pattern is null ? Visibility.Collapsed : Visibility.Visible; }
+
+    async void PatternTransform_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pattern is null || _doc is null || sender is not FrameworkElement { Tag: string action }) return;
+        var changed = action switch
+        {
+            "left" => _pattern with { OffsetX = Math.Max(-200, _pattern.OffsetX - 3) },
+            "right" => _pattern with { OffsetX = Math.Min(200, _pattern.OffsetX + 3) },
+            "up" => _pattern with { OffsetY = Math.Min(200, _pattern.OffsetY + 3) },
+            "down" => _pattern with { OffsetY = Math.Max(-200, _pattern.OffsetY - 3) },
+            "rotateleft" => _pattern with { Rotation = Math.Max(-180, _pattern.Rotation - 5) },
+            "rotateright" => _pattern with { Rotation = Math.Min(180, _pattern.Rotation + 5) },
+            "smaller" => _pattern with { Scale = Math.Max(10, _pattern.Scale - 5) },
+            "larger" => _pattern with { Scale = Math.Min(400, _pattern.Scale + 5) },
+            "mirrorx" => _pattern with { MirrorX = !_pattern.MirrorX },
+            "mirrory" => _pattern with { MirrorY = !_pattern.MirrorY },
+            "copy" => _pattern with { Copies = Math.Min(32, _pattern.Copies + 1) },
+            _ => _pattern
+        };
+        if (changed == _pattern) return;
+        PushUndo(); _pattern = changed; SetActivity(true, "Actualisation du motif dans la vue 3D…");
+        try
+        {
+            var selectedIndex = SelectedProposalIndex();
+            var patterned = await Task.Run(() => _layerBases.Select((basis, index) =>
+            {
+                var result = Clone(basis);
+                if (changed.FourVariants || index == selectedIndex)
+                {
+                    var mode = changed.FourVariants ? new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar }[Math.Min(index, 3)] : changed.Mode;
+                    _patternService.Apply(_doc, result, changed, mode);
+                }
+                return result;
+            }).ToList());
+            for (var index = 0; index < patterned.Count; index++)
+            {
+                var imageLayerIndex = _proposalLayers[index].FindIndex(layer => layer.Kind is ColorLayerKind.Image or ColorLayerKind.MonochromeLogo or ColorLayerKind.Projection);
+                var layer = CreateDifferenceLayer("Motif image", changed.MonochromeLogo ? ColorLayerKind.MonochromeLogo : ColorLayerKind.Image, _layerBases[index], patterned[index], changed);
+                if (imageLayerIndex >= 0) _proposalLayers[index][imageLayerIndex] = layer; else _proposalLayers[index].Add(layer);
+                _proposals[index] = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]);
+            }
+            SelectProposal(selectedIndex); RefreshBindings(); RefreshLayers(); Render(); UpdatePatternText(); _dirty = true;
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Transformation du motif", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { SetActivity(false); }
+    }
 
     void LayersList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

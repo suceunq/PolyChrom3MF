@@ -24,11 +24,18 @@ public sealed class PatternWindow : Window
     readonly Slider _rotation = Slider(-180, 180, 0);
     readonly Slider _offsetX = Slider(-100, 100, 0);
     readonly Slider _offsetY = Slider(-100, 100, 0);
+    readonly Slider _stretchX = Slider(10, 400, 100);
+    readonly Slider _stretchY = Slider(10, 400, 100);
+    readonly Slider _copies = Slider(1, 32, 1);
+    readonly Slider _spacing = Slider(0, 300, 0);
     readonly Slider _logoThreshold = Slider(1, 254, 128);
     readonly CheckBox _variants = new() { Content = new TextBlock { Text = "Créer quatre propositions avec quatre projections différentes", TextWrapping = TextWrapping.Wrap }, IsChecked = true };
     readonly CheckBox _monochromeLogo = new() { Content = new TextBlock { Text = "Mode logo monochrome — conserver uniquement les formes du logo", TextWrapping = TextWrapping.Wrap } };
     readonly CheckBox _invertLogo = new() { Content = new TextBlock { Text = "Logo sombre sur fond clair (inverser noir/blanc)", TextWrapping = TextWrapping.Wrap } };
     readonly CheckBox _repeatAcrossModel = new() { Content = new TextBlock { Text = "Répéter le motif pour couvrir toute la pièce", TextWrapping = TextWrapping.Wrap }, IsChecked = true };
+    readonly CheckBox _mirrorX = new() { Content = "Miroir horizontal" };
+    readonly CheckBox _mirrorY = new() { Content = "Miroir vertical" };
+    readonly CheckBox _backFace = new() { Content = "Prévisualiser aussi les faces arrière", IsChecked = true };
     readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     readonly TextBlock _previewStatus = new() { Text = "L’aperçu se met à jour au relâchement du curseur.", Margin = new Thickness(0, 7, 0, 0) };
 
@@ -48,13 +55,18 @@ public sealed class PatternWindow : Window
         _scale.Value = Value.Scale; _rotation.Value = Value.Rotation; _offsetX.Value = Value.OffsetX; _offsetY.Value = Value.OffsetY; _variants.IsChecked = Value.FourVariants;
         _monochromeLogo.IsChecked = Value.MonochromeLogo; _invertLogo.IsChecked = Value.InvertLogo; _logoThreshold.Value = Value.LogoThreshold;
         _repeatAcrossModel.IsChecked = Value.RepeatAcrossModel;
+        _stretchX.Value = Value.StretchX; _stretchY.Value = Value.StretchY; _copies.Value = Value.Copies; _spacing.Value = Value.Spacing;
+        _mirrorX.IsChecked = Value.MirrorX; _mirrorY.IsChecked = Value.MirrorY; _backFace.IsChecked = Value.BackFacePreview;
         _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); Value = ReadSettings(); PreviewRequested?.Invoke(Value); };
         _mode.SelectionChanged += (_, _) => QueuePreview(); _target.SelectionChanged += (_, _) => QueuePreview(); _logoColor.SelectionChanged += (_, _) => QueuePreview();
-        TrackSlider(_scale); TrackSlider(_rotation); TrackSlider(_offsetX); TrackSlider(_offsetY); TrackSlider(_logoThreshold);
+        TrackSlider(_scale); TrackSlider(_rotation); TrackSlider(_offsetX); TrackSlider(_offsetY); TrackSlider(_stretchX); TrackSlider(_stretchY); TrackSlider(_copies); TrackSlider(_spacing); TrackSlider(_logoThreshold);
         _variants.Checked += (_, _) => QueuePreview(); _variants.Unchecked += (_, _) => QueuePreview();
         _monochromeLogo.Checked += (_, _) => { UpdateLogoControls(); QueuePreview(); }; _monochromeLogo.Unchecked += (_, _) => { UpdateLogoControls(); QueuePreview(); };
         _invertLogo.Checked += (_, _) => QueuePreview(); _invertLogo.Unchecked += (_, _) => QueuePreview();
         _repeatAcrossModel.Checked += (_, _) => QueuePreview(); _repeatAcrossModel.Unchecked += (_, _) => QueuePreview();
+        _mirrorX.Checked += (_, _) => QueuePreview(); _mirrorX.Unchecked += (_, _) => QueuePreview();
+        _mirrorY.Checked += (_, _) => QueuePreview(); _mirrorY.Unchecked += (_, _) => QueuePreview();
+        _backFace.Checked += (_, _) => QueuePreview(); _backFace.Unchecked += (_, _) => QueuePreview();
         Loaded += (_, _) => QueuePreview();
         Closed += (_, _) => _previewTimer.Stop();
 
@@ -72,7 +84,7 @@ public sealed class PatternWindow : Window
         logoPanel.Children.Add(_invertLogo);
         logoPanel.Children.Add(SliderField("Seuil de détection du logo", _logoThreshold, ""));
         panel.Children.Add(logoPanel);
-        panel.Children.Add(SliderField("Taille du motif", _scale, "%")); panel.Children.Add(SliderField("Rotation", _rotation, "°")); panel.Children.Add(SliderField("Décalage horizontal", _offsetX, "%")); panel.Children.Add(SliderField("Décalage vertical", _offsetY, "%"));
+        panel.Children.Add(SliderField("Taille du motif", _scale, "%")); panel.Children.Add(SliderField("Largeur libre", _stretchX, "%")); panel.Children.Add(SliderField("Hauteur libre", _stretchY, "%")); panel.Children.Add(SliderField("Rotation", _rotation, "°")); panel.Children.Add(SliderField("Décalage horizontal", _offsetX, "%")); panel.Children.Add(SliderField("Décalage vertical", _offsetY, "%")); panel.Children.Add(SliderField("Nombre de copies", _copies, "")); panel.Children.Add(SliderField("Espacement des copies", _spacing, "%")); panel.Children.Add(_mirrorX); panel.Children.Add(_mirrorY); panel.Children.Add(_backFace);
         _previewStatus.Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"];
         panel.Children.Add(_previewStatus);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 18, 0, 0) };
@@ -103,7 +115,14 @@ public sealed class PatternWindow : Window
         LogoColorIndex: ((Option<int>?)_logoColor.SelectedItem)?.Value ?? 0,
         InvertLogo: _invertLogo.IsChecked == true,
         LogoThreshold: (byte)Math.Round(_logoThreshold.Value),
-        RepeatAcrossModel: _repeatAcrossModel.IsChecked == true);
+        RepeatAcrossModel: _repeatAcrossModel.IsChecked == true,
+        StretchX: _stretchX.Value,
+        StretchY: _stretchY.Value,
+        Copies: (int)Math.Round(_copies.Value),
+        Spacing: _spacing.Value,
+        MirrorX: _mirrorX.IsChecked == true,
+        MirrorY: _mirrorY.IsChecked == true,
+        BackFacePreview: _backFace.IsChecked == true);
 
     void UpdateLogoControls()
     {
