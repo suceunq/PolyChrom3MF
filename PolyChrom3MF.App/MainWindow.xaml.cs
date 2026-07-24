@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     readonly PatternService _patternService = new();
     readonly PatternGeometryService _patternGeometryService = new();
     readonly SmartSelectionService _smartSelection = new();
+    readonly LayerService _layerService = new();
     readonly ProjectService _projects = new();
     readonly SettingsService _settingsService = new();
     readonly SlicerDetectionService _slicerDetection = new();
@@ -44,6 +45,8 @@ public partial class MainWindow : Window
     ModelDocument? _beforePatternDocument;
     Dictionary<int, PreviewMesh> _previewMeshes = [];
     List<ColorProposal> _proposals = [];
+    List<ColorProposal> _layerBases = [];
+    List<List<ColorLayer>> _proposalLayers = [];
     List<ColorProposal>? _beforePatternProposals;
     ColorProposal? _selected;
     PatternSettings? _pattern;
@@ -167,6 +170,7 @@ public partial class MainWindow : Window
         _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
         var custom = UseFilaments.IsChecked == true ? _settings.FilamentColors : null;
         _proposals = _palettes.Create(_doc, custom, _generation, _funMode, _colorCount);
+        ResetLayers();
         ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS";
         SelectProposal(0);
         Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals;
@@ -183,6 +187,51 @@ public partial class MainWindow : Window
         if (ObjectsList.SelectedIndex >= 0)
             ObjectColorCombo.SelectedIndex = _selected.Assignments.GetValueOrDefault(ObjectsList.SelectedIndex, 0);
         _loadingControls = false;
+        RefreshLayers();
+    }
+
+    void ResetLayers()
+    {
+        _layerBases = _proposals.Select(Clone).ToList();
+        _proposalLayers = _proposals.Select((_, index) => new List<ColorLayer>
+        {
+            _layerService.Create("Couleur de base", ColorLayerKind.BaseColor)
+        }).ToList();
+        RefreshLayers();
+    }
+
+    int SelectedProposalIndex() => _selected is null ? -1 : _proposals.IndexOf(_selected);
+
+    void RefreshLayers(int selected = -1)
+    {
+        if (LayersList is null) return;
+        var proposal = SelectedProposalIndex();
+        var layers = proposal >= 0 && proposal < _proposalLayers.Count ? _proposalLayers[proposal] : [];
+        _loadingControls = true;
+        LayersList.ItemsSource = null;
+        LayersList.ItemsSource = layers.AsEnumerable().Reverse().ToList();
+        LayersList.SelectedIndex = layers.Count == 0 ? -1 : selected >= 0 ? Math.Min(selected, layers.Count - 1) : 0;
+        UpdateLayerControls();
+        _loadingControls = false;
+    }
+
+    ColorLayer? SelectedLayer()
+    {
+        var proposal = SelectedProposalIndex();
+        if (proposal < 0 || proposal >= _proposalLayers.Count || LayersList.SelectedItem is not ColorLayer selected) return null;
+        return _proposalLayers[proposal].FirstOrDefault(layer => layer.Id == selected.Id);
+    }
+
+    void RecomposeSelected()
+    {
+        if (_doc is null) return;
+        var index = SelectedProposalIndex();
+        if (index < 0 || index >= _layerBases.Count || index >= _proposalLayers.Count) return;
+        var composed = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]);
+        _proposals[index] = Rename(composed, _selected!.Name, _selected.Description);
+        _selected = _proposals[index];
+        RefreshBindings();
+        Render();
     }
 
     void Window_Drop(object sender, System.Windows.DragEventArgs e)
@@ -222,6 +271,7 @@ public partial class MainWindow : Window
         SelectProposal(proposalIndex);
         var hex = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
         proposal.Colors[colorIndex] = new PaletteColor("Personnalisée", hex);
+        if (proposalIndex < _layerBases.Count) _layerBases[proposalIndex].Colors[colorIndex] = new PaletteColor("Personnalisée", hex);
         RefreshBindings();
         Render();
         _dirty = true;
@@ -285,6 +335,8 @@ public partial class MainWindow : Window
         var index = ObjectColorCombo.SelectedIndex;
         var hex = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
         _selected.Colors[index] = new PaletteColor("Personnalisée", hex);
+        var proposalIndex = SelectedProposalIndex();
+        if (proposalIndex >= 0 && proposalIndex < _layerBases.Count) _layerBases[proposalIndex].Colors[index] = new PaletteColor("Personnalisée", hex);
         HexColorText.Text = hex;
         RefreshBindings(); Render(); _dirty = true;
     }
@@ -294,7 +346,7 @@ public partial class MainWindow : Window
         if (_selected is null || ObjectColorCombo.SelectedIndex < 0) return;
         var value = HexColorText.Text.Trim();
         if (!System.Text.RegularExpressions.Regex.IsMatch(value, "^#[0-9A-Fa-f]{6}$")) { MessageBox.Show("Saisissez un code au format #RRGGBB.", "Couleur invalide"); return; }
-        PushUndo(); var index = ObjectColorCombo.SelectedIndex; _selected.Colors[index] = new PaletteColor("Personnalisée", value.ToUpperInvariant()); RefreshBindings(); ObjectColorCombo.SelectedIndex = index; Render(); _dirty = true;
+        PushUndo(); var index = ObjectColorCombo.SelectedIndex; _selected.Colors[index] = new PaletteColor("Personnalisée", value.ToUpperInvariant()); var proposalIndex = SelectedProposalIndex(); if (proposalIndex >= 0 && proposalIndex < _layerBases.Count) _layerBases[proposalIndex].Colors[index] = new PaletteColor("Personnalisée", value.ToUpperInvariant()); RefreshBindings(); ObjectColorCombo.SelectedIndex = index; Render(); _dirty = true;
     }
 
     void ObjectColorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -303,6 +355,12 @@ public partial class MainWindow : Window
         PushUndo();
         _selected.Assignments[ObjectsList.SelectedIndex] = ObjectColorCombo.SelectedIndex;
         if (_selected.TriangleAssignments.TryGetValue(ObjectsList.SelectedIndex, out var triangleColors)) Array.Fill(triangleColors, ObjectColorCombo.SelectedIndex);
+        var proposalIndex = SelectedProposalIndex();
+        if (proposalIndex >= 0 && proposalIndex < _layerBases.Count)
+        {
+            _layerBases[proposalIndex].Assignments[ObjectsList.SelectedIndex] = ObjectColorCombo.SelectedIndex;
+            if (_layerBases[proposalIndex].TriangleAssignments.TryGetValue(ObjectsList.SelectedIndex, out var baseTriangles)) Array.Fill(baseTriangles, ObjectColorCombo.SelectedIndex);
+        }
         Render(); _dirty = true;
     }
 
@@ -404,7 +462,14 @@ public partial class MainWindow : Window
             if (settings.FourVariants)
                 for (var i = 0; i < _proposals.Count; i++) _proposals[i] = Rename(_proposals[i], $"Image {i + 1} — {PatternModeName(modesForNames[i])}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(modesForNames[i]).ToLowerInvariant()}");
             else _proposals[selectedIndex] = Rename(_proposals[selectedIndex], $"Image — {PatternModeName(settings.Mode)}", $"Motif {Path.GetFileName(file.FileName)} · {PatternModeName(settings.Mode).ToLowerInvariant()}");
-            _pattern = settings; SelectProposal(selectedIndex); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true;
+            _pattern = settings;
+            _layerBases = geometry.BaseProposals.Select(Clone).ToList();
+            _proposalLayers = _proposals.Select((proposal, index) => new List<ColorLayer>
+            {
+                _layerService.Create("Couleur de base", ColorLayerKind.BaseColor),
+                CreateDifferenceLayer("Motif image", ColorLayerKind.Image, _layerBases[index], proposal, settings)
+            }).ToList();
+            SelectProposal(selectedIndex); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true;
             StatusText.Text = geometry.AddedTriangles > 0
                 ? $"Motif haute précision · {geometry.AddedTriangles:N0} triangles ajoutés localement (niveau {geometry.Levels})."
                 : "Motif appliqué : le maillage est déjà assez détaillé.";
@@ -468,12 +533,114 @@ public partial class MainWindow : Window
         if (_beforePatternProposals is not null) _proposals = _beforePatternProposals.Select(Clone).ToList();
         else { _generation++; GenerateProposals(); }
         if (_beforePatternDocument is not null) _doc = _beforePatternDocument;
-        _pattern = null; _beforePatternProposals = null; _beforePatternDocument = null; SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif image retiré.";
+        _pattern = null; _beforePatternProposals = null; _beforePatternDocument = null; ResetLayers(); SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); ComputeBounds(); Render(); UpdatePatternText(); _dirty = true; StatusText.Text = "Motif image retiré.";
     }
 
     static ColorProposal Rename(ColorProposal proposal, string name, string description) => new(name, description, proposal.Colors.Select(color => new PaletteColor(color.Name, color.Hex)).ToList(), new Dictionary<int, int>(proposal.Assignments)) { TriangleAssignments = proposal.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
+    ColorLayer CreateDifferenceLayer(string name, ColorLayerKind kind, ColorProposal basis, ColorProposal composed, PatternSettings? pattern = null)
+    {
+        var layer = _layerService.Create(name, kind) with { Pattern = pattern };
+        if (_doc is null) return layer;
+        foreach (var obj in _doc.Objects)
+        {
+            var before = basis.TriangleAssignments.GetValueOrDefault(obj.Index);
+            var after = composed.TriangleAssignments.GetValueOrDefault(obj.Index);
+            if (after is null) continue;
+            var overrides = new int[obj.Triangles.Count];
+            Array.Fill(overrides, -1);
+            for (var triangle = 0; triangle < overrides.Length; triangle++)
+            {
+                var previous = before is null ? basis.Assignments.GetValueOrDefault(obj.Index, 0) : before[triangle];
+                if (after[triangle] != previous) overrides[triangle] = after[triangle];
+            }
+            if (overrides.Any(value => value >= 0)) layer.TriangleOverrides[obj.Index] = overrides;
+        }
+        return layer;
+    }
     static string PatternModeName(PatternMode mode) => mode switch { PatternMode.Front => "Projection frontale", PatternMode.Cylindrical => "Enveloppement", PatternMode.Repeated => "Motif répété", _ => "Triplanaire" };
     void UpdatePatternText() { if (PatternText is null) return; PatternText.Text = _pattern is null ? "Aucun motif importé" : $"{(_pattern.DisplayName ?? Path.GetFileName(_pattern.ImagePath))} · {(_pattern.FourVariants ? "4 projections" : PatternModeName(_pattern.Mode))} · taille {_pattern.Scale:0}%"; }
+
+    void LayersList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loadingControls) UpdateLayerControls();
+    }
+
+    void UpdateLayerControls()
+    {
+        if (LayerVisible is null || LayerLocked is null) return;
+        var layer = SelectedLayer();
+        LayerVisible.IsEnabled = LayerLocked.IsEnabled = layer is not null;
+        LayerVisible.IsChecked = layer?.IsVisible ?? false;
+        LayerLocked.IsChecked = layer?.IsLocked ?? false;
+    }
+
+    void AddLayer_Click(object sender, RoutedEventArgs e)
+    {
+        var proposal = SelectedProposalIndex();
+        if (proposal < 0) return;
+        PushUndo();
+        _proposalLayers[proposal].Add(_layerService.Create($"Peinture {_proposalLayers[proposal].Count}", ColorLayerKind.Paint));
+        RefreshLayers();
+        _dirty = true;
+    }
+
+    void DuplicateLayer_Click(object sender, RoutedEventArgs e)
+    {
+        var proposal = SelectedProposalIndex();
+        var layer = SelectedLayer();
+        if (proposal < 0 || layer is null) return;
+        PushUndo();
+        _proposalLayers[proposal].Add(layer.Duplicate(layer.Name + " copie"));
+        RecomposeSelected();
+        RefreshLayers();
+        _dirty = true;
+    }
+
+    void DeleteLayer_Click(object sender, RoutedEventArgs e)
+    {
+        var proposal = SelectedProposalIndex();
+        var layer = SelectedLayer();
+        if (proposal < 0 || layer is null || layer.Kind == ColorLayerKind.BaseColor) return;
+        PushUndo();
+        _proposalLayers[proposal].RemoveAll(item => item.Id == layer.Id);
+        RecomposeSelected();
+        RefreshLayers();
+        _dirty = true;
+    }
+
+    void MoveLayerUp_Click(object sender, RoutedEventArgs e) => MoveSelectedLayer(1);
+    void MoveLayerDown_Click(object sender, RoutedEventArgs e) => MoveSelectedLayer(-1);
+
+    void MoveSelectedLayer(int delta)
+    {
+        var proposal = SelectedProposalIndex();
+        var layer = SelectedLayer();
+        if (proposal < 0 || layer is null) return;
+        var layers = _proposalLayers[proposal];
+        var from = layers.FindIndex(item => item.Id == layer.Id);
+        var to = Math.Clamp(from + delta, 0, layers.Count - 1);
+        if (from == to) return;
+        PushUndo();
+        layers.RemoveAt(from);
+        layers.Insert(to, layer);
+        RecomposeSelected();
+        RefreshLayers();
+        _dirty = true;
+    }
+
+    void LayerProperty_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingControls) return;
+        var proposal = SelectedProposalIndex();
+        var layer = SelectedLayer();
+        if (proposal < 0 || layer is null) return;
+        var index = _proposalLayers[proposal].FindIndex(item => item.Id == layer.Id);
+        _proposalLayers[proposal][index] = layer with { IsVisible = LayerVisible.IsChecked == true, IsLocked = LayerLocked.IsChecked == true };
+        RecomposeSelected();
+        RefreshLayers();
+        _dirty = true;
+    }
+
     void PaintMode_Changed(object sender, RoutedEventArgs e)
     {
         if (PaintMode is null || PaintModeMenu is null) return;
@@ -573,13 +740,32 @@ public partial class MainWindow : Window
     {
         if (_doc is null || _selected is null || _selected.Colors.Count == 0 || _paintSelection.Count == 0) { MessageBox.Show("Activez la sélection de zones et cliquez sur le modèle avant d’appliquer une couleur.", "Coloration manuelle"); return; }
         var colorIndex = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1); PushUndo();
+        var proposalIndex = SelectedProposalIndex();
+        var layer = SelectedLayer();
+        if (layer is null || layer.Kind == ColorLayerKind.BaseColor)
+        {
+            layer = _layerService.Create($"Peinture {_proposalLayers[proposalIndex].Count}", ColorLayerKind.Paint);
+            _proposalLayers[proposalIndex].Add(layer);
+        }
+        if (layer.IsLocked) { MessageBox.Show("Ce calque est verrouillé.", "Coloration manuelle"); return; }
         foreach (var pair in _paintSelection)
         {
             var obj = _doc!.Objects.First(item => item.Index == pair.Key);
-            if (!_selected.TriangleAssignments.TryGetValue(pair.Key, out var assignments) || assignments.Length != obj.Triangles.Count) { assignments = new int[obj.Triangles.Count]; Array.Fill(assignments, _selected.Assignments.GetValueOrDefault(pair.Key, 0)); _selected.TriangleAssignments[pair.Key] = assignments; }
+            if (!layer.TriangleOverrides.TryGetValue(pair.Key, out var assignments) || assignments.Length != obj.Triangles.Count)
+            {
+                assignments = new int[obj.Triangles.Count];
+                Array.Fill(assignments, -1);
+                layer.TriangleOverrides[pair.Key] = assignments;
+            }
             foreach (var triangle in pair.Value.Where(index => index >= 0 && index < assignments.Length)) assignments[triangle] = colorIndex;
         }
-        var count = _paintSelection.Values.Sum(set => set.Count); _paintSelection.Clear(); UpdatePaintSelectionText(); Render(); RefreshBindings(); _dirty = true; StatusText.Text = $"{_selected.Colors[colorIndex].Name} appliquée sur {count:N0} triangles.";
+        var count = _paintSelection.Values.Sum(set => set.Count);
+        _paintSelection.Clear();
+        UpdatePaintSelectionText();
+        RecomposeSelected();
+        RefreshLayers();
+        _dirty = true;
+        StatusText.Text = $"{_selected.Colors[colorIndex].Name} appliquée sur {count:N0} triangles dans le calque « {layer.Name} ».";
     }
 
     void ClearPaintSelection_Click(object sender, RoutedEventArgs e) { _paintSelection.Clear(); UpdatePaintSelectionText(); Render(); StatusText.Text = "Sélection de zones effacée."; }
@@ -690,7 +876,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
         try
         {
-            _projects.Save(dialog.FileName, _doc, _proposals, _proposals.IndexOf(_selected!), _yaw, _pitch, _zoom, _generation, _funMode, _colorCount, _pattern);
+            _projects.Save(dialog.FileName, _doc, _proposals, _proposals.IndexOf(_selected!), _yaw, _pitch, _zoom, _generation, _funMode, _colorCount, _pattern, _proposalLayers, _layerBases);
             _dirty = false; StatusText.Text = "Projet portable enregistré : modèle et styles sont réunis dans un seul fichier.";
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Projet impossible à enregistrer", MessageBoxButton.OK, MessageBoxImage.Error); }
@@ -731,6 +917,18 @@ public partial class MainWindow : Window
                 }
             }
             _pattern = project.Pattern; _beforePatternProposals = null; UpdatePatternText();
+            if (project.Layers is not null && project.Layers.Count == _proposals.Count)
+                _proposalLayers = project.Layers.Select(group => group.Select(layer => layer.Duplicate(layer.Name) with { Id = layer.Id }).ToList()).ToList();
+            else _proposalLayers = _proposals.Select(_ => new List<ColorLayer> { _layerService.Create("Couleur de base", ColorLayerKind.BaseColor) }).ToList();
+            _layerBases = _proposals.Select(Clone).ToList();
+            if (project.LayerBaseAssignments is not null && project.LayerBaseTriangles is not null)
+                for (var p = 0; p < Math.Min(_layerBases.Count, Math.Min(project.LayerBaseAssignments.Count, project.LayerBaseTriangles.Count)); p++)
+                {
+                    _layerBases[p].Assignments.Clear();
+                    foreach (var pair in project.LayerBaseAssignments[p]) _layerBases[p].Assignments[pair.Key] = pair.Value;
+                    _layerBases[p].TriangleAssignments.Clear();
+                    foreach (var pair in project.LayerBaseTriangles[p]) _layerBases[p].TriangleAssignments[pair.Key] = (int[])pair.Value.Clone();
+                }
             _yaw = project.Yaw; _pitch = project.Pitch; _zoom = project.Zoom; SelectProposal(project.SelectedProposal); RefreshBindings(); Render(); _dirty = false;
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Projet impossible à ouvrir", MessageBoxButton.OK, MessageBoxImage.Error); }
@@ -739,15 +937,16 @@ public partial class MainWindow : Window
     void New_Click(object sender, RoutedEventArgs e)
     {
         if (!ConfirmDiscard()) return;
-        _doc = null; _lastSlicerFile = null; _pattern = null; _beforePatternProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); _previewMeshes.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
+        _doc = null; _lastSlicerFile = null; _pattern = null; _beforePatternProposals = null; _beforePatternDocument = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); _previewMeshes.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _layerBases.Clear(); _proposalLayers.Clear(); RefreshLayers(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
     }
 
     bool ConfirmDiscard() => !_dirty || MessageBox.Show("Les modifications non enregistrées seront perdues. Continuer ?", "PolyChrom 3MF", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
 
     void PushUndo() { if (_proposals.Count == 0) return; _undo.Push(Capture()); _redo.Clear(); }
-    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList(), _pattern, _doc);
+    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList(), _pattern, _doc, _layerBases.Select(Clone).ToList(), CloneLayers(_proposalLayers));
     static ColorProposal Clone(ColorProposal p) => new(p.Name, p.Description, p.Colors.Select(c => new PaletteColor(c.Name, c.Hex)).ToList(), new Dictionary<int, int>(p.Assignments)) { TriangleAssignments = p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
-    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _doc = state.Document; _beforePatternProposals = null; _beforePatternDocument = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); SelectProposal(state.Selected); RefreshBindings(); ComputeBounds(); Render(); _dirty = true; }
+    static List<List<ColorLayer>> CloneLayers(IEnumerable<IEnumerable<ColorLayer>> groups) => groups.Select(group => group.Select(layer => layer.Duplicate(layer.Name) with { Id = layer.Id }).ToList()).ToList();
+    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _doc = state.Document; _beforePatternProposals = null; _beforePatternDocument = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); _layerBases = state.LayerBases.Select(Clone).ToList(); _proposalLayers = CloneLayers(state.Layers); SelectProposal(state.Selected); RefreshBindings(); ComputeBounds(); Render(); _dirty = true; }
     void Undo_Click(object sender, RoutedEventArgs e) { if (_undo.Count == 0) return; _redo.Push(Capture()); Restore(_undo.Pop()); StatusText.Text = "Modification annulée."; }
     void Redo_Click(object sender, RoutedEventArgs e) { if (_redo.Count == 0) return; _undo.Push(Capture()); Restore(_redo.Pop()); StatusText.Text = "Modification rétablie."; }
     void RefreshBindings() { Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals; ObjectColorCombo.ItemsSource = null; ObjectColorCombo.ItemsSource = _selected?.Colors; PaintColorCombo.ItemsSource = null; PaintColorCombo.ItemsSource = _selected?.Colors; if (_selected is not null && _selected.Colors.Count > 0) PaintColorCombo.SelectedIndex = 0; }
@@ -1402,5 +1601,5 @@ public partial class MainWindow : Window
     void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 
-    sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern, ModelDocument? Document);
+    sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern, ModelDocument? Document, List<ColorProposal> LayerBases, List<List<ColorLayer>> Layers);
 }

@@ -1,6 +1,6 @@
 namespace PolyChrom3MF.App;
 
-public sealed record PatternGeometryResult(ModelDocument Document, List<ColorProposal> Proposals, int AddedTriangles, int Levels);
+public sealed record PatternGeometryResult(ModelDocument Document, List<ColorProposal> BaseProposals, List<ColorProposal> Proposals, int AddedTriangles, int Levels);
 
 public sealed class PatternGeometryService
 {
@@ -33,13 +33,14 @@ public sealed class PatternGeometryService
         if (boundaryCount > 350_000) levels = Math.Min(levels, 1);
         if (levels == 0 || boundaryCount == 0)
         {
-            var unchanged = bases.Select(Clone).ToList();
+            var unchangedBases = bases.Select(Clone).ToList();
+            var unchanged = unchangedBases.Select(Clone).ToList();
             for (var index = 0; index < unchanged.Count; index++)
             {
                 if (targetProposals is not null && !targetProposals.Contains(index)) continue;
                 _patterns.Apply(source, unchanged[index], settings, modes[Math.Min(index, modes.Count - 1)], cancellationToken);
             }
-            return new PatternGeometryResult(source, unchanged, 0, 0);
+            return new PatternGeometryResult(source, unchangedBases, unchanged, 0, 0);
         }
 
         var objects = new List<ModelObject>(source.Objects.Count);
@@ -63,6 +64,7 @@ public sealed class PatternGeometryService
             SizeZ = allVertices.Max(vertex => vertex.Z) - allVertices.Min(vertex => vertex.Z),
             IsDerived = true
         };
+        var derivedBases = new List<ColorProposal>(bases.Count);
         var proposals = new List<ColorProposal>(bases.Count);
         for (var proposalIndex = 0; proposalIndex < bases.Count; proposalIndex++)
         {
@@ -78,11 +80,12 @@ public sealed class PatternGeometryService
                         : bases[proposalIndex].Assignments.GetValueOrDefault(obj.Index, 0);
                 proposal.TriangleAssignments[obj.Index] = mapped;
             }
+            derivedBases.Add(Clone(proposal));
             if (targetProposals is null || targetProposals.Contains(proposalIndex))
                 _patterns.Apply(derived, proposal, settings, modes[Math.Min(proposalIndex, modes.Count - 1)], cancellationToken);
             proposals.Add(proposal);
         }
-        return new PatternGeometryResult(derived, proposals, checked((int)Math.Min(int.MaxValue, triangleCount - source.TriangleCount)), levels);
+        return new PatternGeometryResult(derived, derivedBases, proposals, checked((int)Math.Min(int.MaxValue, triangleCount - source.TriangleCount)), levels);
     }
 
     static ColorProposal Clone(ColorProposal proposal) => new(

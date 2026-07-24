@@ -7,11 +7,11 @@ using System.Text.RegularExpressions;
 
 namespace PolyChrom3MF.App;
 
-public sealed record ProjectData(string SourcePath, int SelectedProposal, List<List<string>> Proposals, List<Dictionary<int,int>> Assignments, double Yaw, double Pitch, double Zoom, int Generation, bool FunMode = false, int ColorCount = 4, List<Dictionary<int, int[]>>? TriangleAssignments = null, PatternSettings? Pattern = null, List<string>? ProposalNames = null, List<string>? ProposalDescriptions = null);
+public sealed record ProjectData(string SourcePath, int SelectedProposal, List<List<string>> Proposals, List<Dictionary<int,int>> Assignments, double Yaw, double Pitch, double Zoom, int Generation, bool FunMode = false, int ColorCount = 4, List<Dictionary<int, int[]>>? TriangleAssignments = null, PatternSettings? Pattern = null, List<string>? ProposalNames = null, List<string>? ProposalDescriptions = null, List<List<ColorLayer>>? Layers = null, List<Dictionary<int, int>>? LayerBaseAssignments = null, List<Dictionary<int, int[]>>? LayerBaseTriangles = null);
 
 public sealed class ProjectService
 {
-    public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null)
+    public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null, IReadOnlyList<IReadOnlyList<ColorLayer>>? layers = null, IReadOnlyList<ColorProposal>? layerBases = null)
     {
         if (!File.Exists(document.Path)) throw new FileNotFoundException("Le modèle 3D source est introuvable.", document.Path);
         string? derivedSnapshot = null;
@@ -35,7 +35,14 @@ public sealed class ProjectService
             if (!image.Exists || image.Length <= 0 || !image.Extension.Equals(".png", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Le PNG du motif est absent ou invalide.");
             storedPattern = pattern with { ImagePath = "pattern/motif.png" };
         }
-        var data = new ProjectData(modelEntryName, selected, proposals.Select(p => p.Colors.Select(c => c.Hex).ToList()).ToList(), proposals.Select(p => new Dictionary<int,int>(p.Assignments)).ToList(), yaw, pitch, zoom, generation, funMode, colorCount, triangleAssignments, storedPattern, proposals.Select(p => p.Name).ToList(), proposals.Select(p => p.Description).ToList());
+        var storedLayers = layers?.Select(group => group.Select(layer => layer with
+        {
+            TriangleOverrides = layer.TriangleOverrides.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()),
+            Pattern = layer.Pattern is null ? null : layer.Pattern with { ImagePath = storedPattern?.ImagePath ?? layer.Pattern.ImagePath }
+        }).ToList()).ToList();
+        var baseAssignments = layerBases?.Select(p => new Dictionary<int, int>(p.Assignments)).ToList();
+        var baseTriangles = layerBases?.Select(p => p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone())).ToList();
+        var data = new ProjectData(modelEntryName, selected, proposals.Select(p => p.Colors.Select(c => c.Hex).ToList()).ToList(), proposals.Select(p => new Dictionary<int,int>(p.Assignments)).ToList(), yaw, pitch, zoom, generation, funMode, colorCount, triangleAssignments, storedPattern, proposals.Select(p => p.Name).ToList(), proposals.Select(p => p.Description).ToList(), storedLayers, baseAssignments, baseTriangles);
         Validate(data);
 
         var fullPath = Path.GetFullPath(path);
@@ -121,7 +128,9 @@ public sealed class ProjectService
             Extract(patternEntry, patternPath);
             extractedPattern = data.Pattern with { ImagePath = patternPath };
         }
-        return data with { SourcePath = extractedPath, Pattern = extractedPattern };
+        var extractedLayers = data.Layers?.Select(group => group.Select(layer =>
+            layer.Pattern is null ? layer : layer with { Pattern = extractedPattern ?? layer.Pattern }).ToList()).ToList();
+        return data with { SourcePath = extractedPath, Pattern = extractedPattern, Layers = extractedLayers };
     }
 
     static void Extract(ZipArchiveEntry entry, string destinationPath)
@@ -154,11 +163,22 @@ public sealed class ProjectService
             throw new InvalidDataException("L’objet ciblé par le motif n’existe pas dans le modèle intégré.");
         foreach (var assignments in data.Assignments)
             if (assignments.Keys.Any(key => !objects.ContainsKey(key))) throw new InvalidDataException("Le projet cible un objet absent du modèle intégré.");
-        if (data.TriangleAssignments is null) return;
-        foreach (var assignments in data.TriangleAssignments)
-            foreach (var pair in assignments)
-                if (!objects.TryGetValue(pair.Key, out var obj) || pair.Value.Length != obj.Triangles.Count)
-                    throw new InvalidDataException("Les affectations de triangles ne correspondent pas au modèle intégré.");
+        if (data.TriangleAssignments is not null)
+            foreach (var assignments in data.TriangleAssignments)
+                foreach (var pair in assignments)
+                    if (!objects.TryGetValue(pair.Key, out var obj) || pair.Value.Length != obj.Triangles.Count)
+                        throw new InvalidDataException("Les affectations de triangles ne correspondent pas au modèle intégré.");
+        if (data.Layers is not null)
+        {
+            var layerService = new LayerService();
+            for (var index = 0; index < data.Layers.Count; index++)
+                layerService.Validate(data.Layers[index], document, data.Proposals[Math.Min(index, data.Proposals.Count - 1)].Count);
+        }
+        if (data.LayerBaseTriangles is not null)
+            foreach (var assignments in data.LayerBaseTriangles)
+                foreach (var pair in assignments)
+                    if (!objects.TryGetValue(pair.Key, out var obj) || pair.Value.Length != obj.Triangles.Count)
+                        throw new InvalidDataException("La base des calques ne correspond pas au modèle intégré.");
     }
 
     static void Validate(ProjectData data)
@@ -166,6 +186,8 @@ public sealed class ProjectService
         if (data is null || string.IsNullOrWhiteSpace(data.SourcePath) || data.Proposals is null || data.Assignments is null || data.Proposals.Count is < 1 or > 4 || data.Assignments.Count > 4 || data.TriangleAssignments?.Count > 4 || data.SelectedProposal < 0 || data.SelectedProposal >= data.Proposals.Count || data.ColorCount is < 2 or > 32 || !double.IsFinite(data.Yaw) || !double.IsFinite(data.Pitch) || !double.IsFinite(data.Zoom) || data.Zoom <= 0)
             throw new InvalidDataException("Le projet contient des paramètres invalides.");
         if (data.Pattern is not null) PatternService.ValidateSettings(data.Pattern);
+        if (data.Layers?.Count > 4 || data.LayerBaseAssignments?.Count > 4 || data.LayerBaseTriangles?.Count > 4)
+            throw new InvalidDataException("Le projet contient trop de groupes de calques.");
         if (data.ProposalNames is not null && data.ProposalNames.Count != data.Proposals.Count || data.ProposalDescriptions is not null && data.ProposalDescriptions.Count != data.Proposals.Count) throw new InvalidDataException("Les noms des propositions sont invalides.");
         if (data.ProposalNames?.Any(value => InvalidText(value, 160)) == true || data.ProposalDescriptions?.Any(value => InvalidText(value, 1000)) == true)
             throw new InvalidDataException("Les textes des propositions sont invalides.");
