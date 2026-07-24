@@ -1,14 +1,16 @@
 # Changelog
 
-## 2.0.0
+## 2.0.1
 
 - Subdivision locale adaptative non destructive sous les motifs, logos, textes et zones peintes.
-- Système de calques complet avec ordre, visibilité, verrouillage, duplication, renommage, fusion, opacité d’aperçu, texte et effets.
+- Système de calques complet avec ordre, visibilité, verrouillage, duplication, renommage, fusion, texte et effets.
 - Sélection intelligente par îlot, angle, couleur, caméra, pièce, rectangle, lasso et détection sémantique assistée.
 - Assistant multicolore avec détection des profils imprimante/filaments et estimation des couches et changements.
-- Moteur Direct3D 11 accéléré, chargement en arrière-plan, LOD automatique et mémoire fortement réduite sur les très gros fichiers.
+- Aperçu 3D solide, chargement en arrière-plan, LOD automatique et mémoire fortement réduite sur les très gros fichiers.
 - Galerie de styles partageables `.polystyle` et mode débutant.
 - Transformation directe des motifs, redimensionnement libre, copies espacées et miroirs.
+- Recentrage automatique après import, coloration et application d’un motif ou logo.
+- Suppression du rendu pointillé/translucide sur les modèles de plus de 1,2 million de triangles.
 
 ## 1.7.4
 

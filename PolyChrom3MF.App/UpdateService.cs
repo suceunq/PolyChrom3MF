@@ -12,13 +12,14 @@ public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
         "Subdivision locale adaptative sous les logos, textes, motifs et zones peintes.\n" +
-        "Calques non destructifs avec visibilité, verrouillage, ordre, duplication, fusion et opacité d’aperçu.\n" +
+        "Calques non destructifs avec visibilité, verrouillage, ordre, duplication, fusion, texte et effets.\n" +
         "Sélections intelligentes : îlot, angle, couleur, caméra, pièce, rectangle, lasso et détection sémantique.\n" +
         "Assistant multicolore avec détection des profils de slicer, correspondance des filaments et estimation des changements.\n" +
-        "Nouveau moteur Direct3D 11 multithread avec LOD automatique pour les modèles de plusieurs millions de triangles.\n" +
+        "Aperçu 3D solide avec LOD automatique pour les modèles de plusieurs millions de triangles.\n" +
         "Galerie de styles .polystyle, calques texte/effets et mode débutant.\n" +
         "Manipulation directe des motifs dans la vue 3D, copies, miroir et redimensionnement libre.\n" +
-        "Import, mémoire, export et stabilité renforcés.";
+        "Recentrage automatique après import, coloration et application d’un motif ou logo.\n" +
+        "Import, mémoire, export et stabilité renforcés, sans rendu pointillé ni translucide.";
 
     const string LatestReleaseApi = "https://api.github.com/repos/suceunq/PolyChrom3MF/releases/latest";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";

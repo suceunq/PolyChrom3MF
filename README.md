@@ -1,6 +1,6 @@
-# PolyChrom 3MF 2.0.0
+# PolyChrom 3MF 2.0.1
 
-Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un moteur Direct3D 11.
+Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un aperçu solide optimisé pour les très gros modèles.
 
 ## Télécharger
 
@@ -23,7 +23,7 @@ Application Windows française et locale pour colorer, personnaliser et prépare
 - Couleurs de filament locales, saisie HEX et sélecteur Windows.
 - Nom et code hexadécimal visibles sous chaque couleur, avec infobulle sombre au survol.
 - Détection automatique des slicers installés, dont Snapmaker Orca, affichage de leur version et bouton direct d’ouverture dans le slicer préféré.
-- Choix de 4 à 32 couleurs au démarrage, modifiable ensuite depuis la barre d’outils.
+- Choix de 2 à 32 couleurs au démarrage, modifiable ensuite depuis la barre d’outils.
 - Palettes et motifs réellement étendus au nombre choisi, avec export de tous les matériaux 3MF.
 - Menus Fichier, Édition, Affichage et Aide au style Windows standard.
 - Détection automatique des nouvelles versions au démarrage, téléchargement vérifié avec barre de progression, installation silencieuse et redémarrage automatique.
@@ -33,9 +33,10 @@ Application Windows française et locale pour colorer, personnaliser et prépare
 - Ouverture des projets `.poly3mf` par double-clic, glisser-déposer ou menu Fichier, avec compatibilité des anciens projets.
 - Export 3MF standard `basematerials`, géométrie source préservée et validation par réouverture.
 - Subdivision adaptative limitée aux contours des motifs, textes, logos et zones peintes.
-- Calques non destructifs : visibilité, verrouillage, ordre, renommage, duplication, fusion, opacité d’aperçu, texte et effets.
+- Calques non destructifs : visibilité, verrouillage, ordre, renommage, duplication, fusion, texte et effets.
 - Sélection par îlot, angle, couleur, caméra, pièce, rectangle, lasso et régions sémantiques assistées.
-- Moteur Direct3D 11 multithread, cache et LOD automatique pour les très gros modèles.
+- Aperçu WPF solide avec cache, LOD automatique et maillage allégé pour les très gros modèles.
+- Recentrage automatique après import, coloration, texte, logo ou motif.
 - Assistant d’impression avec profils Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer.
 - Galerie portable `.polystyle`, mode débutant et transformation directe des motifs dans la vue.
 
