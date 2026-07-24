@@ -120,7 +120,7 @@ public partial class MainWindow : Window
             _doc = await Task.Run(() => Path.GetExtension(path).Equals(".stl", StringComparison.OrdinalIgnoreCase) ? _stlService.Read(path) : _service.Read(path));
             if (_doc.TriangleCount > FullDetailTriangleLimit)
                 await Task.Run(() => GC.Collect(2, GCCollectionMode.Aggressive, true, true));
-            if (_doc.TriangleCount > FullDetailTriangleLimit && !_settings.UseGpuRenderer)
+            if (_doc.TriangleCount > FullDetailTriangleLimit)
             {
                 SetActivity(true, $"Optimisation de l’aperçu de {_doc.TriangleCount:N0} faces…");
                 _previewMeshes = await Task.Run(() => BuildPreviewMeshes(_doc));
@@ -1351,18 +1351,10 @@ public partial class MainWindow : Window
 
     void Render()
     {
-        // Keep the compatibility renderer for regular models: it gives solid,
-        // correctly lit surfaces. Direct3D is reserved for genuinely huge
-        // meshes where its LOD path provides a measurable benefit.
-        var useGpu = _settings.UseGpuRenderer && _doc?.TriangleCount > FullDetailTriangleLimit && PaintMode?.IsChecked != true && _gpuViewport.IsAvailable && _doc is not null && _selected is not null;
-        GpuHost.Visibility = useGpu ? Visibility.Visible : Visibility.Collapsed;
-        Viewer.Visibility = useGpu ? Visibility.Collapsed : Visibility.Visible;
-        if (useGpu)
-        {
-            _ = _gpuViewport.RenderAsync(_doc!, _selected!, _center, _radius);
-            _gpuViewport.SetCamera(_center, _radius, _yaw, _pitch, _zoom);
-            return;
-        }
+        // Always use the solid compatibility renderer. The previous Direct3D
+        // path produced a dotted/translucent result on dense models.
+        GpuHost.Visibility = Visibility.Collapsed;
+        Viewer.Visibility = Visibility.Visible;
         while (Viewer.Children.Count > 2) Viewer.Children.RemoveAt(2);
         _modelObjects.Clear();
         _renderTriangleLookup.Clear();
