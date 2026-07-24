@@ -285,6 +285,17 @@ public class ThreeMfTests
         Assert.Single(result.UnusedFilaments);
         Assert.Contains(result.Warnings, warning => warning.Contains("inférieur à la buse"));
     }
+    [Fact] public void Detecte_le_profil_imprimante_du_slicer()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".json");
+        File.WriteAllText(path, """{"printer_model":"Snapmaker U1","nozzle_diameter":"0.4","layer_height":"0.16","extruder_count":4,"filament_colour":["#FF0000","#00FF00","#0000FF","#FFFFFF"]}""");
+        var printer = PrinterProfileDetectionService.DetectFromFiles([path]);
+        Assert.NotNull(printer);
+        Assert.Equal("Snapmaker U1", printer.Name);
+        Assert.Equal(4, printer.MaterialSlots);
+        Assert.Equal(4, printer.Filaments.Count);
+        Assert.Equal(.16, printer.LayerHeight, 3);
+    }
     [Fact] public void Style_natif_conserve_palette_motif_et_profil()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".polystyle");

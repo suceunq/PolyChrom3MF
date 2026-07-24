@@ -12,6 +12,7 @@ namespace PolyChrom3MF.App;
 public sealed class SettingsWindow : Window
 {
     readonly SlicerDetectionService _slicerDetection = new();
+    readonly PrinterProfileDetectionService _printerDetection = new();
     readonly System.Windows.Controls.ComboBox _theme = new() { ItemsSource = new[] { "Sombre", "Clair", "Système" }, Margin = new Thickness(0, 4, 0, 10) };
     readonly System.Windows.Controls.TextBox _folder = new() { Margin = new Thickness(0, 4, 0, 10) };
     readonly System.Windows.Controls.ComboBox _slicer = new() { Margin = new Thickness(0, 4, 0, 6), IsEditable = true, DisplayMemberPath = nameof(DetectedSlicer.Label) };
@@ -43,6 +44,15 @@ public sealed class SettingsWindow : Window
         browse.Click += (_, _) => { var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "Slicer Windows (*.exe)|*.exe", CheckFileExists = true }; if (dialog.ShowDialog(this) == true) _slicer.Text = dialog.FileName; };
         slicerButtons.Children.Add(refresh); slicerButtons.Children.Add(browse); panel.Children.Add(slicerButtons); panel.Children.Add(_slicerStatus);
         panel.Children.Add(new TextBlock { Text = "Profil d’impression multicolore", FontWeight = FontWeights.Bold, Margin = new Thickness(0, 8, 0, 0) });
+        var detectPrinter = new Button { Content = "Détecter depuis le slicer", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 5, 0, 8) };
+        detectPrinter.Click += (_, _) =>
+        {
+            var detected = _printerDetection.Detect();
+            if (detected is null) { MessageBox.Show("Aucun profil d’imprimante exploitable n’a été trouvé dans les slicers détectés."); return; }
+            _printer.Text = detected.Name; _slots.Text = detected.MaterialSlots.ToString(); _nozzle.Text = detected.NozzleDiameter.ToString("0.###"); _layerHeight.Text = detected.LayerHeight.ToString("0.###");
+            if (detected.Filaments.Count > 0) { Value.FilamentColors.Clear(); Value.FilamentColors.AddRange(detected.Filaments.Select(filament => filament.Hex)); }
+        };
+        panel.Children.Add(detectPrinter);
         panel.Children.Add(new TextBlock { Text = "Nom de l’imprimante" }); panel.Children.Add(_printer);
         var printerFields = new StackPanel { Orientation = Orientation.Horizontal };
         printerFields.Children.Add(Labeled("Emplacements", _slots));

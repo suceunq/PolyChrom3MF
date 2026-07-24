@@ -404,7 +404,7 @@ public partial class MainWindow : Window
     void PrintAssistant_Click(object sender, RoutedEventArgs e)
     {
         if (_selected is null) { MessageBox.Show("Importez d’abord un modèle.", "Assistant impression"); return; }
-        new PrintAssistantWindow(_selected, _settings, PreferredSlicerName()) { Owner = this }.ShowDialog();
+        new PrintAssistantWindow(_selected, _settings, PreferredSlicerName(), _doc) { Owner = this }.ShowDialog();
     }
 
     async void ImportPattern_Click(object sender, RoutedEventArgs e)

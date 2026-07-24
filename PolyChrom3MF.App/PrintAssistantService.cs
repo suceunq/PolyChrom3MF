@@ -5,11 +5,11 @@ namespace PolyChrom3MF.App;
 public sealed record LoadedFilament(int Slot, string Name, string Hex, string Material = "PLA");
 public sealed record PrinterCapabilities(string Name, int MaterialSlots, double NozzleDiameter, double LayerHeight, IReadOnlyList<LoadedFilament> Filaments);
 public sealed record FilamentMatch(int ColorIndex, int Slot, string ModelHex, string FilamentHex, double Distance);
-public sealed record PrintPreparation(IReadOnlyList<FilamentMatch> Matches, IReadOnlyList<LoadedFilament> UnusedFilaments, IReadOnlyList<string> Warnings);
+public sealed record PrintPreparation(IReadOnlyList<FilamentMatch> Matches, IReadOnlyList<LoadedFilament> UnusedFilaments, IReadOnlyList<string> Warnings, int EstimatedColorChanges = 0, int EstimatedLayers = 0);
 
 public sealed class PrintAssistantService
 {
-    public PrintPreparation Analyze(ColorProposal proposal, PrinterCapabilities printer, double smallestDetailMillimeters = double.PositiveInfinity)
+    public PrintPreparation Analyze(ColorProposal proposal, PrinterCapabilities printer, double smallestDetailMillimeters = double.PositiveInfinity, ModelDocument? document = null)
     {
         if (printer.MaterialSlots < 1 || printer.MaterialSlots > 64 || printer.NozzleDiameter is < .1 or > 2 || printer.LayerHeight is <= 0 or > 2)
             throw new InvalidDataException("Le profil d’imprimante est invalide.");
@@ -29,7 +29,28 @@ public sealed class PrintAssistantService
         if (proposal.Colors.Count > printer.MaterialSlots) warnings.Add($"{proposal.Colors.Count} couleurs pour {printer.MaterialSlots} emplacements : changements manuels nécessaires.");
         if (smallestDetailMillimeters < printer.NozzleDiameter) warnings.Add($"Détail de {smallestDetailMillimeters:0.###} mm inférieur à la buse de {printer.NozzleDiameter:0.###} mm.");
         if (printer.Filaments.Count == 0) warnings.Add("Aucun filament chargé n’a été détecté.");
-        return new PrintPreparation(matches, printer.Filaments.Where(filament => !usedSlots.Contains(filament.Slot)).ToList(), warnings);
+        var estimatedLayers = document is null ? 0 : Math.Max(1, (int)Math.Ceiling(document.SizeZ / printer.LayerHeight));
+        return new PrintPreparation(matches, printer.Filaments.Where(filament => !usedSlots.Contains(filament.Slot)).ToList(), warnings, EstimateChanges(document, proposal, printer.LayerHeight), estimatedLayers);
+    }
+
+    static int EstimateChanges(ModelDocument? document, ColorProposal proposal, double layerHeight)
+    {
+        if (document is null || layerHeight <= 0) return 0;
+        var minZ = document.Objects.SelectMany(obj => obj.Vertices).Min(vertex => vertex.Z);
+        var layers = new Dictionary<int, HashSet<int>>();
+        foreach (var obj in document.Objects)
+        {
+            var assignments = proposal.TriangleAssignments.GetValueOrDefault(obj.Index);
+            for (var index = 0; index < obj.Triangles.Count; index++)
+            {
+                var triangle = obj.Triangles[index];
+                var z = (obj.Vertices[triangle.A].Z + obj.Vertices[triangle.B].Z + obj.Vertices[triangle.C].Z) / 3;
+                var layer = Math.Max(0, (int)((z - minZ) / layerHeight));
+                if (!layers.TryGetValue(layer, out var used)) layers[layer] = used = [];
+                used.Add(assignments is null ? proposal.Assignments.GetValueOrDefault(obj.Index, 0) : assignments[index]);
+            }
+        }
+        return layers.Values.Sum(colors => Math.Max(0, colors.Count - 1));
     }
 
     internal static double Distance(string first, string second)

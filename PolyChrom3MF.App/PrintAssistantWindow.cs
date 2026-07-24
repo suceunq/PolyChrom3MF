@@ -14,7 +14,7 @@ namespace PolyChrom3MF.App;
 
 public sealed class PrintAssistantWindow : Window
 {
-    public PrintAssistantWindow(ColorProposal proposal, AppSettings settings, string slicerName)
+    public PrintAssistantWindow(ColorProposal proposal, AppSettings settings, string slicerName, ModelDocument? document = null)
     {
         Title = "Assistant d’impression multicolore";
         Width = 720;
@@ -23,8 +23,10 @@ public sealed class PrintAssistantWindow : Window
         MinHeight = 520;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var filaments = settings.FilamentColors.Select((hex, index) => new LoadedFilament(index + 1, $"Filament {index + 1}", hex)).ToList();
-        var printer = new PrinterCapabilities(settings.PrinterName, settings.MaterialSlots, settings.NozzleDiameter, settings.LayerHeight, filaments);
-        var preparation = new PrintAssistantService().Analyze(proposal, printer);
+        var detected = new PrinterProfileDetectionService().Detect();
+        var printer = detected is not null && detected.Filaments.Count > 0 ? detected : new PrinterCapabilities(settings.PrinterName, settings.MaterialSlots, settings.NozzleDiameter, settings.LayerHeight, filaments);
+        var smallestDetail = document is null ? double.PositiveInfinity : Math.Min(document.SizeX, Math.Min(document.SizeY, document.SizeZ)) / 500;
+        var preparation = new PrintAssistantService().Analyze(proposal, printer, smallestDetail, document);
 
         var root = new DockPanel { Margin = new Thickness(22) };
         var close = new Button { Content = "Fermer", IsCancel = true, MinWidth = 100, HorizontalAlignment = HorizontalAlignment.Right };
@@ -39,6 +41,12 @@ public sealed class PrintAssistantWindow : Window
             Margin = new Thickness(0, 7, 0, 18),
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources["SecondaryText"]
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Estimation : {preparation.EstimatedLayers:N0} couches · environ {preparation.EstimatedColorChanges:N0} changements de filament",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 12)
         });
         panel.Children.Add(new TextBlock { Text = "Correspondance modèle → filaments chargés", FontSize = 16, FontWeight = FontWeights.SemiBold });
         foreach (var match in preparation.Matches)
