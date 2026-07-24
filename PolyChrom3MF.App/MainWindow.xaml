@@ -56,6 +56,7 @@
       <Border Grid.Column="1" Background="{DynamicResource ViewerBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,10,0">
         <Grid>
           <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" MouseLeave="Viewer_MouseLeave" ToolTip="Rotation orbitale 360° possible sur le modèle, le plateau ou le fond · Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
+          <ContentControl x:Name="GpuHost" Visibility="Collapsed"/>
           <Canvas IsHitTestVisible="False" Panel.ZIndex="15">
             <Polyline x:Name="PaintStrokePreview" Visibility="Collapsed" Stroke="#99FFD32D" StrokeThickness="16"
                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>

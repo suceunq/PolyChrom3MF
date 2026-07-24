@@ -22,6 +22,7 @@ public sealed class SettingsWindow : Window
     readonly TextBox _slots = new() { Margin = new Thickness(0, 4, 8, 8), Width = 90 };
     readonly TextBox _nozzle = new() { Margin = new Thickness(0, 4, 8, 8), Width = 90 };
     readonly TextBox _layerHeight = new() { Margin = new Thickness(0, 4, 0, 8), Width = 90 };
+    readonly System.Windows.Controls.CheckBox _gpu = new() { Content = "Moteur graphique Direct3D 11 (recommandé)", Margin = new Thickness(0, 4, 0, 10) };
     public AppSettings Value { get; }
 
     public SettingsWindow(AppSettings settings)
@@ -30,6 +31,7 @@ public sealed class SettingsWindow : Window
         Title = "Paramètres — PolyChrom 3MF"; Width = 720; Height = 680; MinWidth = 620; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         _theme.SelectedItem = settings.Theme; _folder.Text = settings.ExportFolder; _open.IsChecked = settings.OpenFolderAfterExport; _verify.IsChecked = settings.VerifyAfterExport;
         _printer.Text = settings.PrinterName; _slots.Text = settings.MaterialSlots.ToString(); _nozzle.Text = settings.NozzleDiameter.ToString("0.###"); _layerHeight.Text = settings.LayerHeight.ToString("0.###");
+        _gpu.IsChecked = settings.UseGpuRenderer;
         var panel = new StackPanel { Margin = new Thickness(24) };
         panel.Children.Add(new TextBlock { Text = "Thème" }); panel.Children.Add(_theme);
         panel.Children.Add(new TextBlock { Text = "Dossier d’exportation par défaut" }); panel.Children.Add(_folder);
@@ -47,10 +49,10 @@ public sealed class SettingsWindow : Window
         printerFields.Children.Add(Labeled("Buse (mm)", _nozzle));
         printerFields.Children.Add(Labeled("Couche (mm)", _layerHeight));
         panel.Children.Add(printerFields);
-        panel.Children.Add(_open); panel.Children.Add(_verify);
+        panel.Children.Add(_gpu); panel.Children.Add(_open); panel.Children.Add(_verify);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var reset = new Button { Content = "Valeurs par défaut", Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(12, 6, 12, 6) };
-        reset.Click += (_, _) => { var d = new AppSettings(); _theme.SelectedItem = d.Theme; _folder.Text = d.ExportFolder; RefreshSlicers(); _printer.Text = d.PrinterName; _slots.Text = d.MaterialSlots.ToString(); _nozzle.Text = d.NozzleDiameter.ToString(); _layerHeight.Text = d.LayerHeight.ToString(); _open.IsChecked = d.OpenFolderAfterExport; _verify.IsChecked = d.VerifyAfterExport; };
+        reset.Click += (_, _) => { var d = new AppSettings(); _theme.SelectedItem = d.Theme; _folder.Text = d.ExportFolder; RefreshSlicers(); _printer.Text = d.PrinterName; _slots.Text = d.MaterialSlots.ToString(); _nozzle.Text = d.NozzleDiameter.ToString(); _layerHeight.Text = d.LayerHeight.ToString(); _gpu.IsChecked = d.UseGpuRenderer; _open.IsChecked = d.OpenFolderAfterExport; _verify.IsChecked = d.VerifyAfterExport; };
         var ok = new Button { Content = "Enregistrer", IsDefault = true, Padding = new Thickness(12, 6, 12, 6) };
         ok.Click += (_, _) =>
         {
@@ -58,6 +60,7 @@ public sealed class SettingsWindow : Window
             { MessageBox.Show("Vérifiez les valeurs du profil d’imprimante.", "Paramètres invalides"); return; }
             Value.Theme = _theme.SelectedItem?.ToString() ?? "Sombre"; Value.ExportFolder = _folder.Text; Value.PreferredSlicer = _slicer.SelectedItem is DetectedSlicer detected ? detected.Path : _slicer.Text;
             Value.PrinterName = _printer.Text; Value.MaterialSlots = slots; Value.NozzleDiameter = nozzle; Value.LayerHeight = layerHeight;
+            Value.UseGpuRenderer = _gpu.IsChecked == true;
             Value.OpenFolderAfterExport = _open.IsChecked == true; Value.VerifyAfterExport = _verify.IsChecked == true; DialogResult = true;
         };
         buttons.Children.Add(reset); buttons.Children.Add(ok); panel.Children.Add(buttons); Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };

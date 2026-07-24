@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     readonly SlicerDetectionService _slicerDetection = new();
     readonly UpdateService _updateService = new();
     readonly StyleLibraryService _styleLibrary = new();
+    readonly GpuViewportHost _gpuViewport;
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
     readonly Dictionary<GeometryModel3D, Dictionary<(int A, int B, int C), int>> _renderTriangleLookup = [];
     readonly Dictionary<int, double> _objectDiagonals = [];
@@ -63,6 +64,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _gpuViewport = new GpuViewportHost();
+        GpuHost.Content = _gpuViewport;
         ApplyStandardMenuColors(MainMenu);
         _settingsExistedAtStartup = File.Exists(_settingsService.FilePath);
         _settings = _settingsService.Load();
@@ -716,6 +719,7 @@ public partial class MainWindow : Window
             Viewer?.ReleaseMouseCapture();
         }
         UpdateBrushCursorVisibility();
+        Render();
         StatusText.Text = enabled ? "Mode zones actif : choisissez Face par face ou Pinceau fluide. Clic droit pour tourner." : "Sélection de zones désactivée.";
     }
 
@@ -1210,6 +1214,15 @@ public partial class MainWindow : Window
 
     void Render()
     {
+        var useGpu = _settings.UseGpuRenderer && PaintMode?.IsChecked != true && _gpuViewport.IsAvailable && _doc is not null && _selected is not null;
+        GpuHost.Visibility = useGpu ? Visibility.Visible : Visibility.Collapsed;
+        Viewer.Visibility = useGpu ? Visibility.Collapsed : Visibility.Visible;
+        if (useGpu)
+        {
+            _ = _gpuViewport.RenderAsync(_doc!, _selected!, _center, _radius);
+            _gpuViewport.SetCamera(_center, _radius, _yaw, _pitch, _zoom);
+            return;
+        }
         while (Viewer.Children.Count > 2) Viewer.Children.RemoveAt(2);
         _modelObjects.Clear();
         _renderTriangleLookup.Clear();
@@ -1288,6 +1301,7 @@ public partial class MainWindow : Window
         var distance = _radius * 3.0 * _zoom;
         var position = _center + direction * distance; var look = _center - position;
         Viewer.Camera = _perspective ? new PerspectiveCamera(position, look, up, 42) : new OrthographicCamera(position, look, up, _radius * 2.4 * _zoom);
+        _gpuViewport.SetCamera(_center, _radius, _yaw, _pitch, _zoom);
     }
 
     internal static (Vector3D Direction, Vector3D Up) OrbitFrame(double yawDegrees, double pitchDegrees)
@@ -1730,7 +1744,7 @@ public partial class MainWindow : Window
     void ToggleGrid_Click(object sender, RoutedEventArgs e) { _grid = !_grid; Render(); StatusText.Text = _grid ? "Plateau affiché." : "Plateau masqué."; }
     void TogglePerspective_Click(object sender, RoutedEventArgs e) { _perspective = !_perspective; UpdateCamera(); }
 
-    void Settings_Click(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings) { Owner = this }; if (dialog.ShowDialog() == true) { _settings = dialog.Value; _settingsService.Save(_settings); EnsurePreferredSlicer(); ApplyTheme(); UpdateSlicerButton(); } }
+    void Settings_Click(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings) { Owner = this }; if (dialog.ShowDialog() == true) { _settings = dialog.Value; _settingsService.Save(_settings); EnsurePreferredSlicer(); ApplyTheme(); UpdateSlicerButton(); Render(); } }
     void ApplyTheme()
     {
         var light = _settings.Theme == "Clair" || (_settings.Theme == "Système" && SystemThemeIsLight());
@@ -1834,7 +1848,7 @@ public partial class MainWindow : Window
     }
     void About_Click(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
     void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return; if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e); }
-    void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; }
+    void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; if (!e.Cancel) _gpuViewport.Dispose(); }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 
     sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern, ModelDocument? Document, List<ColorProposal> LayerBases, List<List<ColorLayer>> Layers);

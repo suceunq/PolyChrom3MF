@@ -17,6 +17,7 @@ public sealed class AppSettings
     public int MaterialSlots { get; set; } = 4;
     public double NozzleDiameter { get; set; } = .4;
     public double LayerHeight { get; set; } = .2;
+    public bool UseGpuRenderer { get; set; } = true;
     public List<string> FilamentColors { get; set; } = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
     public string LastSeenVersion { get; set; } = "";
     public string LastReleaseNotes { get; set; } = "";
