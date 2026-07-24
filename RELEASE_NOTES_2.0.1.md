@@ -1,0 +1,9 @@
+- Subdivision locale adaptative sous les motifs, logos, textes et zones peintes afin de préserver les petits détails sans alourdir tout le modèle.
+- Calques non destructifs avec visibilité, verrouillage, ordre, renommage, duplication, fusion, texte et effets.
+- Sélections intelligentes par îlot, angle, couleur, caméra, pièce, rectangle, lasso et détection sémantique assistée.
+- Assistant multicolore avec détection des slicers et profils d’imprimante, correspondance des filaments et estimation des changements.
+- Aperçu 3D solide avec LOD automatique, chargement en arrière-plan et consommation mémoire réduite pour les modèles de plusieurs millions de triangles.
+- Galerie de styles `.polystyle`, mode débutant et transformation directe des motifs : déplacement, rotation, taille libre, copies et miroirs.
+- Recentrage automatique après import, coloration ou application d’un logo ; suppression définitive du rendu pointillé/translucide des gros modèles.
+- Import 3MF/STL, projets `.poly3mf`, export, annulation, pinceau et stabilité générale renforcés.
+- Les fonctions de la version 1.7.4 restent incluses : motifs couvrant toute la pièce, modification d’une couleur par clic droit et palettes de 2 à 32 couleurs.

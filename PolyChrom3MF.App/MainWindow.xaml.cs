@@ -22,7 +22,10 @@ namespace PolyChrom3MF.App;
 
 public partial class MainWindow : Window
 {
-    const long FullDetailTriangleLimit = 1_200_000;
+    // Models up to two million triangles stay at full fidelity. The former
+    // 1.2M cut-off simplified the 1.44M-triangle test figurine and could merge
+    // thin, nearby surfaces into large fan-shaped preview triangles.
+    const long FullDetailTriangleLimit = 2_000_000;
     const int LargeModelPreviewTarget = 700_000;
     readonly ThreeMfService _service = new();
     readonly StlService _stlService = new();
