@@ -1351,7 +1351,10 @@ public partial class MainWindow : Window
 
     void Render()
     {
-        var useGpu = _settings.UseGpuRenderer && PaintMode?.IsChecked != true && _gpuViewport.IsAvailable && _doc is not null && _selected is not null;
+        // Keep the compatibility renderer for regular models: it gives solid,
+        // correctly lit surfaces. Direct3D is reserved for genuinely huge
+        // meshes where its LOD path provides a measurable benefit.
+        var useGpu = _settings.UseGpuRenderer && _doc?.TriangleCount > FullDetailTriangleLimit && PaintMode?.IsChecked != true && _gpuViewport.IsAvailable && _doc is not null && _selected is not null;
         GpuHost.Visibility = useGpu ? Visibility.Visible : Visibility.Collapsed;
         Viewer.Visibility = useGpu ? Visibility.Collapsed : Visibility.Visible;
         if (useGpu)
