@@ -11,6 +11,9 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
+        "Le bouton « Appliquer les filaments » reste maintenant toujours visible en bas de la fenêtre de gestion.\n" +
+        "La couture blanche des projections cylindriques et des motifs répétés est supprimée par une fusion périodique des bords.\n" +
+        "Les motifs monochromes triplanaires conservent leurs traits au changement d’axe au lieu de créer une bande claire.\n" +
         "Les motifs répétés utilisent maintenant un raccord miroir continu, sans ligne de démarcation brutale.\n" +
         "La projection triplanaire mélange les trois axes pour supprimer les coutures visibles entre les faces.\n" +
         "L’échantillonnage bilinéaire améliore la netteté et la régularité des motifs PNG/JPG.\n" +

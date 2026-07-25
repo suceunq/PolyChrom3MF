@@ -80,9 +80,9 @@ public sealed class PatternService
                         (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
                         (u, v) = Transform(u, v, settings, repeats);
                         if (!repeats && (u < 0 || u > 1 || v < 0 || v > 1)) return null;
-                        u = repeats ? SeamlessWrap(u) : Math.Clamp(u, 0, 1);
-                        v = repeats ? SeamlessWrap(v) : Math.Clamp(v, 0, 1);
-                        pixel = image.Pixel(u, v);
+                        pixel = repeats
+                            ? image.RepeatingPixel(u, v)
+                            : image.Pixel(Math.Clamp(u, 0, 1), Math.Clamp(v, 0, 1));
                     }
                     if (pixel.A < settings.AlphaThreshold) return null;
                     if (!settings.MonochromeLogo) return Nearest(pixel, palette);
@@ -131,12 +131,21 @@ public sealed class PatternService
         {
             (u, v, _) = ApplyCoverage(u, v, true, PatternMode.Triplanar, settings.RepeatAcrossModel);
             (u, v) = Transform(u, v, settings, true);
-            return image.Pixel(SeamlessWrap(u), SeamlessWrap(v));
+            return image.RepeatingPixel(u, v);
         }
 
         var yz = Sample(ny * 2, (1 - nz) * 2);
         var xz = Sample(nx * 2, (1 - nz) * 2);
         var xy = Sample(nx * 2, (1 - ny) * 2);
+        if (image.IsHighContrastMonochrome)
+        {
+            var candidates = new[] { (Pixel: yz, Weight: normalX), (Pixel: xz, Weight: normalY), (Pixel: xy, Weight: normalZ) };
+            return candidates
+                .Where(candidate => candidate.Weight / total >= .025)
+                .OrderBy(candidate => Luminance(candidate.Pixel))
+                .DefaultIfEmpty((Pixel: yz, Weight: normalX))
+                .First().Pixel;
+        }
         byte Blend(byte first, byte second, byte third) =>
             (byte)Math.Clamp(Math.Round((first * normalX + second * normalY + third * normalZ) / total), 0, 255);
         return new Pixel(
@@ -193,7 +202,26 @@ public sealed class PatternService
         var bitmap = LoadBitmap(path);
         var stride = checked(bitmap.PixelWidth * 4); var pixels = new byte[checked(stride * bitmap.PixelHeight)];
         bitmap.CopyPixels(pixels, stride, 0);
-        return new PatternImage(bitmap.PixelWidth, bitmap.PixelHeight, stride, pixels);
+        return new PatternImage(bitmap.PixelWidth, bitmap.PixelHeight, stride, pixels, IsHighContrastMonochrome(pixels, stride));
+    }
+
+    static bool IsHighContrastMonochrome(byte[] pixels, int stride)
+    {
+        var rowWidth = stride / 4;
+        var pixelCount = pixels.Length / 4;
+        var step = Math.Max(1, pixelCount / 20_000);
+        var grayscale = 0; var dark = 0; var light = 0; var sampled = 0;
+        for (var pixel = 0; pixel < pixelCount; pixel += step)
+        {
+            var offset = pixel / rowWidth * stride + pixel % rowWidth * 4;
+            var b = pixels[offset]; var g = pixels[offset + 1]; var r = pixels[offset + 2];
+            if (Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) <= 24) grayscale++;
+            var luminance = (r * 299 + g * 587 + b * 114) / 1000;
+            if (luminance <= 64) dark++;
+            if (luminance >= 192) light++;
+            sampled++;
+        }
+        return sampled > 0 && grayscale >= sampled * .9 && dark >= sampled * .01 && light >= sampled * .01;
     }
 
     static BitmapSource LoadBitmap(string path)
@@ -305,11 +333,16 @@ public sealed class PatternService
         return best;
     }
 
-    internal static double SeamlessWrap(double value)
+    static double Luminance(Pixel pixel) => pixel.R * .299 + pixel.G * .587 + pixel.B * .114;
+
+    internal static double Wrap(double value) => value - Math.Floor(value);
+
+    internal static double SeamBlendWeight(double wrapped, double width = .12)
     {
-        var tile = Math.Floor(value);
-        var fraction = value - tile;
-        return ((long)tile & 1) == 0 ? fraction : 1 - fraction;
+        var distance = Math.Min(wrapped, 1 - wrapped);
+        if (distance >= width) return 0;
+        var amount = 1 - distance / width;
+        return amount * amount * (3 - 2 * amount);
     }
     static ModelBounds Bounds(ModelDocument document)
     {
@@ -319,8 +352,19 @@ public sealed class PatternService
     }
 
     readonly record struct Pixel(byte B, byte G, byte R, byte A);
-    sealed record PatternImage(int Width, int Height, int Stride, byte[] Pixels)
+    sealed record PatternImage(int Width, int Height, int Stride, byte[] Pixels, bool IsHighContrastMonochrome)
     {
+        public Pixel RepeatingPixel(double u, double v)
+        {
+            u = Wrap(u); v = Wrap(v);
+            var pixel = Pixel(u, v);
+            var horizontal = SeamBlendWeight(u);
+            if (horizontal > 0) pixel = Mix(pixel, Pixel(Wrap(u + .5), v), horizontal);
+            var vertical = SeamBlendWeight(v);
+            if (vertical > 0) pixel = Mix(pixel, Pixel(u, Wrap(v + .5)), vertical);
+            return pixel;
+        }
+
         public Pixel Pixel(double u, double v)
         {
             var px = Math.Clamp(u, 0, 1) * (Width - 1);
@@ -335,6 +379,12 @@ public sealed class PatternService
                 return (byte)Math.Clamp(Math.Round(top * (1 - ty) + bottom * ty), 0, 255);
             }
             return new Pixel(Channel(0), Channel(1), Channel(2), Channel(3));
+        }
+
+        static Pixel Mix(Pixel first, Pixel second, double amount)
+        {
+            byte Blend(byte a, byte b) => (byte)Math.Clamp(Math.Round(a * (1 - amount) + b * amount), 0, 255);
+            return new Pixel(Blend(first.B, second.B), Blend(first.G, second.G), Blend(first.R, second.R), Blend(first.A, second.A));
         }
     }
     readonly record struct ModelBounds(double MinX, double MinY, double MinZ, double SizeX, double SizeY, double SizeZ, double CenterX, double CenterY);

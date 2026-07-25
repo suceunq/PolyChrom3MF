@@ -38,18 +38,28 @@ public sealed class FilamentColorsWindow : Window
             index < colors.Count ? colors[index] : Defaults[index % Defaults.Length],
             index < materials.Count && materials[index].Equals("PETG", StringComparison.OrdinalIgnoreCase) ? "PETG" : "PLA")).ToList();
 
-        var panel = new StackPanel { Margin = new Thickness(24) };
-        panel.Children.Add(new TextBlock { Text = "MES FILAMENTS", FontSize = 22, FontWeight = FontWeights.Bold });
-        panel.Children.Add(new TextBlock
+        var panel = new Grid { Margin = new Thickness(24) };
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var title = new TextBlock { Text = "MES FILAMENTS", FontSize = 22, FontWeight = FontWeights.Bold };
+        Grid.SetRow(title, 0); panel.Children.Add(title);
+        var explanation = new TextBlock
         {
             Text = "Choisissez le nombre de couleurs, puis définissez leur teinte et leur matériau. Toutes les modifications seront enregistrées ensemble.",
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 16),
             Foreground = (MediaBrush)Application.Current.Resources["SecondaryText"]
-        });
+        };
+        Grid.SetRow(explanation, 1); panel.Children.Add(explanation);
         _countText = new TextBlock { FontSize = 18, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center };
         _count = new Slider { Minimum = 2, Maximum = 32, TickFrequency = 1, IsSnapToTickEnabled = true, Value = Math.Clamp(colors.Count, 2, 32), Margin = new Thickness(0, 8, 0, 6) };
         _count.ValueChanged += (_, _) => { UpdateCount(); RebuildSlots(); };
-        panel.Children.Add(_countText); panel.Children.Add(_count);
+        var countPanel = new StackPanel();
+        countPanel.Children.Add(_countText); countPanel.Children.Add(_count);
+        Grid.SetRow(countPanel, 2); panel.Children.Add(countPanel);
         var presets = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 14) };
         foreach (var count in new[] { 2, 4, 6, 8, 12, 16, 24, 32 })
         {
@@ -57,13 +67,20 @@ public sealed class FilamentColorsWindow : Window
             button.Click += (_, _) => _count.Value = count;
             presets.Children.Add(button);
         }
-        panel.Children.Add(presets);
-        panel.Children.Add(new ScrollViewer { Content = _slots, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Height = 385 });
+        Grid.SetRow(presets, 3); panel.Children.Add(presets);
+        var scroller = new ScrollViewer
+        {
+            Content = _slots,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+        Grid.SetRow(scroller, 4); panel.Children.Add(scroller);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
         actions.Children.Add(new Button { Content = "Annuler", IsCancel = true, MinWidth = 95 });
-        var save = new Button { Content = "Enregistrer tous les filaments", IsDefault = true, MinWidth = 210 };
+        var save = new Button { Content = "Appliquer les filaments", IsDefault = true, MinWidth = 210 };
         save.Click += (_, _) => DialogResult = true;
-        actions.Children.Add(save); panel.Children.Add(actions);
+        actions.Children.Add(save);
+        Grid.SetRow(actions, 5); panel.Children.Add(actions);
         Content = panel;
         UpdateCount(); RebuildSlots();
     }

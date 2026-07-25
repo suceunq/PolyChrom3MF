@@ -49,6 +49,24 @@ public class ThreeMfTests
         return path;
     }
 
+    static string SeamPng()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".png");
+        const int size = 9;
+        var pixels = Enumerable.Repeat((byte)255, size * size * 4).ToArray();
+        for (var index = 3; index < pixels.Length; index += 4) pixels[index] = 255;
+        for (var y = 0; y < size; y++)
+            for (var x = 3; x <= 5; x++)
+            {
+                var offset = (y * size + x) * 4;
+                pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = 0;
+            }
+        var bitmap = BitmapSource.Create(size, size, 96, 96, PixelFormats.Bgra32, null, pixels, size * 4);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write)) encoder.Save(stream);
+        return path;
+    }
+
     static string JpegWithBackground()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jpg");
@@ -200,11 +218,28 @@ public class ThreeMfTests
         Assert.Equal(["Generic PLA", "Generic PETG"], settings.RootElement.GetProperty("filament_settings_id").EnumerateArray().Select(value => value.GetString()));
     }
     [Theory]
-    [InlineData(.999, 1.001)]
-    [InlineData(-.001, .001)]
-    public void Repetition_miroir_evite_les_raccords_brutaux(double left, double right)
+    [InlineData(.001)]
+    [InlineData(.999)]
+    public void Repetition_fond_les_bords_du_motif_pour_masquer_la_couture(double coordinate)
     {
-        Assert.InRange(Math.Abs(PatternService.SeamlessWrap(left) - PatternService.SeamlessWrap(right)), 0, .003);
+        Assert.InRange(PatternService.SeamBlendWeight(coordinate), .99, 1);
+    }
+    [Fact] public void Enveloppement_cylindrique_remplace_la_bande_de_couture_par_le_contenu_du_motif()
+    {
+        var vertices = new List<Vertex>
+        {
+            new(-10, .01, 4), new(-10, .08, 5), new(-10, .01, 6),
+            new(-10, -.01, 4), new(-10, -.08, 5), new(-10, -.01, 6),
+            new(10, -.08, 0), new(10, .08, 10)
+        };
+        var obj = new ModelObject(0, "cylindre", vertices, [new Triangle(0, 1, 2), new Triangle(3, 4, 5)], "3D/3dmodel.model");
+        var document = new ModelDocument("couture.3mf", new XDocument(), "3D/3dmodel.model", [obj], 20, .16, 10, [], 2, null, "millimeter", 0, 0, "3MF");
+        var proposal = new ColorProposal("test", "test", [new PaletteColor("Noir", "#000000"), new PaletteColor("Blanc", "#FFFFFF")], new Dictionary<int, int> { [0] = 1 })
+        {
+            TriangleAssignments = new Dictionary<int, int[]> { [0] = [1, 1] }
+        };
+        new PatternService().Apply(document, proposal, new PatternSettings(SeamPng(), PatternMode.Cylindrical, FourVariants: false));
+        Assert.Equal([0, 0], proposal.TriangleAssignments[0]);
     }
     [Fact] public void Exporte_et_relit_sans_perte() { var p = Sample(2); var s = new ThreeMfService(); var d = s.Read(p); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); var report = s.ExportAndValidate(d, new PaletteService().Create(2)[0], output, true); var r = s.Read(output); Assert.Equal(2, r.Objects.Count); Assert.Equal(2, r.TriangleCount); Assert.Contains("dimensions identiques", report); Assert.True(r.ExistingColorCount >= 2); }
     [Fact] public void Peut_exporter_sur_le_fichier_source_sans_le_corrompre() { var path = Sample(); var service = new ThreeMfService(); var document = service.Read(path); service.Export(document, new PaletteService().Create(document)[0], path); var reopened = service.Read(path); Assert.Equal(document.TriangleCount, reopened.TriangleCount); Assert.True(reopened.ExistingColorCount >= 4); }

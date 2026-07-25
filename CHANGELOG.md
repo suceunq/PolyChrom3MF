@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.10
+
+- Bouton « Appliquer les filaments » fixé en bas de la fenêtre et toujours accessible.
+- Fusion périodique des bords pour supprimer la couture blanche des projections répétées et cylindriques.
+- Préservation des traits des motifs monochromes lors des transitions triplanaires.
+- Test de non-régression dédié aux deux côtés de la couture cylindrique.
+
 ## 2.0.9
 
 - Répétition miroir continue des images pour éviter les lignes de raccord sur le modèle.
