@@ -69,13 +69,21 @@ public sealed class PatternService
                 var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
                 int? Classify(double x, double y, double z)
                 {
-                    var (u, v, repeats) = Coordinates(mode, x, y, z, a, b, c, bounds);
-                    (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
-                    (u, v) = Transform(u, v, settings, repeats);
-                    if (!repeats && (u < 0 || u > 1 || v < 0 || v > 1)) return null;
-                    u = repeats ? Wrap(u) : Math.Clamp(u, 0, 1);
-                    v = repeats ? Wrap(v) : Math.Clamp(v, 0, 1);
-                    var pixel = image.Pixel(u, v);
+                    Pixel pixel;
+                    if (mode == PatternMode.Triplanar)
+                    {
+                        pixel = TriplanarPixel(image, x, y, z, a, b, c, bounds, settings);
+                    }
+                    else
+                    {
+                        var (u, v, repeats) = Coordinates(mode, x, y, z, a, b, c, bounds);
+                        (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
+                        (u, v) = Transform(u, v, settings, repeats);
+                        if (!repeats && (u < 0 || u > 1 || v < 0 || v > 1)) return null;
+                        u = repeats ? SeamlessWrap(u) : Math.Clamp(u, 0, 1);
+                        v = repeats ? SeamlessWrap(v) : Math.Clamp(v, 0, 1);
+                        pixel = image.Pixel(u, v);
+                    }
                     if (pixel.A < settings.AlphaThreshold) return null;
                     if (!settings.MonochromeLogo) return Nearest(pixel, palette);
                     if (!IsLogoPixel(pixel.R, pixel.G, pixel.B, settings.LogoThreshold, settings.InvertLogo))
@@ -105,6 +113,37 @@ public sealed class PatternService
             }
         }
         return new PatternApplyResult(colored, transparent) { RefinementTriangles = refinement };
+    }
+
+    static Pixel TriplanarPixel(PatternImage image, double x, double y, double z, Vertex a, Vertex b, Vertex c, ModelBounds bounds, PatternSettings settings)
+    {
+        var nx = (x - bounds.MinX) / bounds.SizeX;
+        var ny = (y - bounds.MinY) / bounds.SizeY;
+        var nz = (z - bounds.MinZ) / bounds.SizeZ;
+        var ux = b.X - a.X; var uy = b.Y - a.Y; var uz = b.Z - a.Z;
+        var vx = c.X - a.X; var vy = c.Y - a.Y; var vz = c.Z - a.Z;
+        var normalX = Math.Abs(uy * vz - uz * vy);
+        var normalY = Math.Abs(uz * vx - ux * vz);
+        var normalZ = Math.Abs(ux * vy - uy * vx);
+        var total = Math.Max(.000001, normalX + normalY + normalZ);
+
+        Pixel Sample(double u, double v)
+        {
+            (u, v, _) = ApplyCoverage(u, v, true, PatternMode.Triplanar, settings.RepeatAcrossModel);
+            (u, v) = Transform(u, v, settings, true);
+            return image.Pixel(SeamlessWrap(u), SeamlessWrap(v));
+        }
+
+        var yz = Sample(ny * 2, (1 - nz) * 2);
+        var xz = Sample(nx * 2, (1 - nz) * 2);
+        var xy = Sample(nx * 2, (1 - ny) * 2);
+        byte Blend(byte first, byte second, byte third) =>
+            (byte)Math.Clamp(Math.Round((first * normalX + second * normalY + third * normalZ) / total), 0, 255);
+        return new Pixel(
+            Blend(yz.B, xz.B, xy.B),
+            Blend(yz.G, xz.G, xy.G),
+            Blend(yz.R, xz.R, xy.R),
+            Blend(yz.A, xz.A, xy.A));
     }
 
     public static void ValidateSettings(PatternSettings settings)
@@ -266,7 +305,12 @@ public sealed class PatternService
         return best;
     }
 
-    static double Wrap(double value) => value - Math.Floor(value);
+    internal static double SeamlessWrap(double value)
+    {
+        var tile = Math.Floor(value);
+        var fraction = value - tile;
+        return ((long)tile & 1) == 0 ? fraction : 1 - fraction;
+    }
     static ModelBounds Bounds(ModelDocument document)
     {
         var vertices = document.Objects.SelectMany(obj => obj.Vertices).ToArray();
@@ -279,8 +323,18 @@ public sealed class PatternService
     {
         public Pixel Pixel(double u, double v)
         {
-            var x = Math.Clamp((int)Math.Round(u * (Width - 1)), 0, Width - 1); var y = Math.Clamp((int)Math.Round(v * (Height - 1)), 0, Height - 1);
-            var offset = y * Stride + x * 4; return new Pixel(Pixels[offset], Pixels[offset + 1], Pixels[offset + 2], Pixels[offset + 3]);
+            var px = Math.Clamp(u, 0, 1) * (Width - 1);
+            var py = Math.Clamp(v, 0, 1) * (Height - 1);
+            var x0 = (int)Math.Floor(px); var y0 = (int)Math.Floor(py);
+            var x1 = Math.Min(x0 + 1, Width - 1); var y1 = Math.Min(y0 + 1, Height - 1);
+            var tx = px - x0; var ty = py - y0;
+            byte Channel(int channel)
+            {
+                var top = Pixels[y0 * Stride + x0 * 4 + channel] * (1 - tx) + Pixels[y0 * Stride + x1 * 4 + channel] * tx;
+                var bottom = Pixels[y1 * Stride + x0 * 4 + channel] * (1 - tx) + Pixels[y1 * Stride + x1 * 4 + channel] * tx;
+                return (byte)Math.Clamp(Math.Round(top * (1 - ty) + bottom * ty), 0, 255);
+            }
+            return new Pixel(Channel(0), Channel(1), Channel(2), Channel(3));
         }
     }
     readonly record struct ModelBounds(double MinX, double MinY, double MinZ, double SizeX, double SizeY, double SizeZ, double CenterX, double CenterY);

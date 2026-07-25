@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.9
+
+- Répétition miroir continue des images pour éviter les lignes de raccord sur le modèle.
+- Projection triplanaire adoucie par mélange des axes et échantillonnage bilinéaire.
+- Gestion groupée de 2 à 32 couleurs de filament dans une seule fenêtre.
+- Choix PLA ou PETG pour chaque couleur et présélection du matériau dans les slicers compatibles.
+
 ## 2.0.2
 
 - Plusieurs motifs PNG/JPG indépendants peuvent désormais coexister dans un même projet, chacun ciblant un objet différent ou toute la figurine.

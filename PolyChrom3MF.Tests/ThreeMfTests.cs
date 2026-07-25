@@ -186,6 +186,26 @@ public class ThreeMfTests
         Assert.Contains("G92 E0", root.GetProperty("before_layer_change_gcode").GetString());
         Assert.All(root.GetProperty("z_hop_types").EnumerateArray(), value => Assert.Equal("Normal Lift", value.GetString()));
     }
+    [Fact] public void Exporte_les_materiaux_pla_et_petg_pour_les_slicers()
+    {
+        var service = new ThreeMfService();
+        var document = service.Read(Sample(2));
+        var proposal = new PaletteService().Create(document, colorCount: 2)[0];
+        var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf");
+        service.Export(document, proposal, output, ["PLA", "PETG"]);
+        using var result = ZipFile.OpenRead(output);
+        using var reader = new StreamReader(result.GetEntry("Metadata/project_settings.config")!.Open());
+        using var settings = JsonDocument.Parse(reader.ReadToEnd());
+        Assert.Equal(["PLA", "PETG"], settings.RootElement.GetProperty("filament_type").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal(["Generic PLA", "Generic PETG"], settings.RootElement.GetProperty("filament_settings_id").EnumerateArray().Select(value => value.GetString()));
+    }
+    [Theory]
+    [InlineData(.999, 1.001)]
+    [InlineData(-.001, .001)]
+    public void Repetition_miroir_evite_les_raccords_brutaux(double left, double right)
+    {
+        Assert.InRange(Math.Abs(PatternService.SeamlessWrap(left) - PatternService.SeamlessWrap(right)), 0, .003);
+    }
     [Fact] public void Exporte_et_relit_sans_perte() { var p = Sample(2); var s = new ThreeMfService(); var d = s.Read(p); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); var report = s.ExportAndValidate(d, new PaletteService().Create(2)[0], output, true); var r = s.Read(output); Assert.Equal(2, r.Objects.Count); Assert.Equal(2, r.TriangleCount); Assert.Contains("dimensions identiques", report); Assert.True(r.ExistingColorCount >= 2); }
     [Fact] public void Peut_exporter_sur_le_fichier_source_sans_le_corrompre() { var path = Sample(); var service = new ThreeMfService(); var document = service.Read(path); service.Export(document, new PaletteService().Create(document)[0], path); var reopened = service.Read(path); Assert.Equal(document.TriangleCount, reopened.TriangleCount); Assert.True(reopened.ExistingColorCount >= 4); }
     [Fact] public void Export_preserve_les_entrees_originales() { var p = Sample(); using (var z = ZipFile.Open(p, ZipArchiveMode.Update)) using (var w = new StreamWriter(z.CreateEntry("Metadata/keep.txt").Open())) w.Write("conserver"); var s = new ThreeMfService(); var d = s.Read(p); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); s.Export(d, new PaletteService().Create(1)[0], output); using var result = ZipFile.OpenRead(output); Assert.NotNull(result.GetEntry("Metadata/keep.txt")); }
@@ -205,7 +225,7 @@ public class ThreeMfTests
         Assert.Equal(.6, loaded.Layers[0][0].PreviewOpacity, 3);
         Assert.Equal(2, loaded.Layers[0][0].TriangleOverrides[0][0]);
     }
-    [Fact] public void Parametres_corrompus_sont_assainis() { var settings = new AppSettings { Theme = "inconnu", ExportFolder = "", PreferredSlicer = null!, ColorCount = 99, FilamentColors = ["incorrect", "#aabbcc", "#AABBCC"] }; SettingsService.Normalize(settings); Assert.Equal("Sombre", settings.Theme); Assert.Equal(32, settings.ColorCount); Assert.Equal("", settings.PreferredSlicer); Assert.Equal(["#AABBCC"], settings.FilamentColors); Assert.False(string.IsNullOrWhiteSpace(settings.ExportFolder)); }
+    [Fact] public void Parametres_corrompus_sont_assainis() { var settings = new AppSettings { Theme = "inconnu", ExportFolder = "", PreferredSlicer = null!, ColorCount = 99, FilamentColors = ["incorrect", "#aabbcc", "#AABBCC"], FilamentMaterials = ["petg", "ABS"] }; SettingsService.Normalize(settings); Assert.Equal("Sombre", settings.Theme); Assert.Equal(32, settings.ColorCount); Assert.Equal("", settings.PreferredSlicer); Assert.Equal(["#AABBCC", "#AABBCC"], settings.FilamentColors); Assert.Equal(["PETG", "PLA"], settings.FilamentMaterials); Assert.False(string.IsNullOrWhiteSpace(settings.ExportFolder)); }
     [Fact] public void Refuse_un_projet_aux_couleurs_invalides() { var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); File.WriteAllText(path, "{\"SourcePath\":\"x.3mf\",\"SelectedProposal\":0,\"Proposals\":[[\"danger\",\"#000000\",\"#111111\",\"#222222\"]],\"Assignments\":[],\"Yaw\":0,\"Pitch\":0,\"Zoom\":1,\"Generation\":0,\"ColorCount\":4}"); Assert.Throws<InvalidDataException>(() => new ProjectService().Load(path)); }
     [Fact] public void Refuse_un_projet_aux_listes_absentes() { var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); File.WriteAllText(path, "{\"SourcePath\":\"x.3mf\",\"SelectedProposal\":0,\"Proposals\":null,\"Assignments\":null,\"Yaw\":0,\"Pitch\":0,\"Zoom\":1,\"Generation\":0,\"ColorCount\":4}"); Assert.Throws<InvalidDataException>(() => new ProjectService().Load(path)); }
     [Fact] public void Analyse_une_release_github_securisee() { var update = UpdateService.ParseRelease("{\"tag_name\":\"v2.4.1\",\"html_url\":\"https://github.com/suceunq/PolyChrom3MF/releases/tag/v2.4.1\",\"body\":\"## Nouveautés\\n- Projets portables\",\"assets\":[{\"name\":\"PolyChrom3MF_Setup_x64.exe\",\"browser_download_url\":\"https://github.com/suceunq/PolyChrom3MF/releases/download/v2.4.1/PolyChrom3MF_Setup_x64.exe\",\"digest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"size\":123456}]}"); Assert.Equal(new Version(2, 4, 1), update.Version); Assert.Equal("v2.4.1", update.Tag); Assert.Equal(123456, update.Size); Assert.Contains("Projets portables", update.ReleaseNotes); }

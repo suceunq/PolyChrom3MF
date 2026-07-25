@@ -19,6 +19,7 @@ public sealed class AppSettings
     public double LayerHeight { get; set; } = .2;
     public bool UseGpuRenderer { get; set; }
     public List<string> FilamentColors { get; set; } = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
+    public List<string> FilamentMaterials { get; set; } = ["PLA", "PLA", "PLA", "PLA"];
     public string LastSeenVersion { get; set; } = "";
     public string LastReleaseNotes { get; set; } = "";
     public string PendingUpdateVersion { get; set; } = "";
@@ -71,8 +72,12 @@ public sealed class SettingsService
         value.LayerHeight = Math.Clamp(value.LayerHeight, .02, 2);
         value.FilamentColors = (value.FilamentColors ?? [])
             .Where(color => !string.IsNullOrWhiteSpace(color) && Regex.IsMatch(color, "^#[0-9A-Fa-f]{6}$"))
-            .Select(color => color.ToUpperInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            .Select(color => color.ToUpperInvariant()).Take(32).ToList();
         if (value.FilamentColors.Count == 0) value.FilamentColors = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
+        value.FilamentMaterials = (value.FilamentMaterials ?? [])
+            .Select(material => string.Equals(material, "PETG", StringComparison.OrdinalIgnoreCase) ? "PETG" : "PLA")
+            .Take(value.FilamentColors.Count).ToList();
+        while (value.FilamentMaterials.Count < value.FilamentColors.Count) value.FilamentMaterials.Add("PLA");
         return value;
     }
 

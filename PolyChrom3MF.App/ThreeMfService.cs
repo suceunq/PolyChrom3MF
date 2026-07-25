@@ -88,9 +88,9 @@ public sealed class ThreeMfService
         }
     }
 
-    public void Export(ModelDocument document, ColorProposal proposal, string destination) => ExportAndValidate(document, proposal, destination, true);
+    public void Export(ModelDocument document, ColorProposal proposal, string destination, IReadOnlyList<string>? filamentMaterials = null) => ExportAndValidate(document, proposal, destination, true, filamentMaterials);
 
-    public string ExportAndValidate(ModelDocument document, ColorProposal proposal, string destination, bool verify)
+    public string ExportAndValidate(ModelDocument document, ColorProposal proposal, string destination, bool verify, IReadOnlyList<string>? filamentMaterials = null)
     {
         if (proposal.Colors.Count is < 2 or > 32) throw new InvalidDataException("Une proposition doit contenir entre deux et trente-deux couleurs.");
         var fullDestination = Path.GetFullPath(destination);
@@ -164,7 +164,7 @@ public sealed class ThreeMfService
                 using var writer = XmlWriter.Create(output, SafeWriterSettings());
                 xml.Save(writer);
             }
-            WriteSlicerProjectMetadata(zip, document, proposal);
+            WriteSlicerProjectMetadata(zip, document, proposal, filamentMaterials);
         }
 
         var report = $"{document.Objects.Count} objets · {document.TriangleCount:N0} triangles · {proposal.Colors.Count} couleurs";
@@ -342,7 +342,7 @@ public sealed class ThreeMfService
         else { anchor.AddBeforeSelf(version); anchor.AddBeforeSelf(painting); }
     }
 
-    static void WriteSlicerProjectMetadata(ZipArchive zip, ModelDocument document, ColorProposal proposal)
+    static void WriteSlicerProjectMetadata(ZipArchive zip, ModelDocument document, ColorProposal proposal, IReadOnlyList<string>? filamentMaterials)
     {
         ReplaceXmlEntry(zip, "Metadata/model_settings.config", BuildSlicerModelSettings(document));
 
@@ -368,8 +368,11 @@ public sealed class ThreeMfService
         settings["filament_colour"] = colors;
         settings["default_filament_colour"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("")).ToArray());
         settings["filament_ids"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("GFSG00_01")).ToArray());
-        settings["filament_type"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("PLA")).ToArray());
-        settings["filament_settings_id"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("Generic PLA")).ToArray());
+        var materials = Enumerable.Range(0, proposal.Colors.Count)
+            .Select(index => string.Equals(filamentMaterials?.ElementAtOrDefault(index), "PETG", StringComparison.OrdinalIgnoreCase) ? "PETG" : "PLA")
+            .ToArray();
+        settings["filament_type"] = new JsonArray(materials.Select(material => JsonValue.Create(material)).ToArray());
+        settings["filament_settings_id"] = new JsonArray(materials.Select(material => JsonValue.Create($"Generic {material}")).ToArray());
         settings["nozzle_diameter"] ??= new JsonArray(JsonValue.Create("0.4"));
         NormalizePortableSlicerSettings(settings, proposal.Colors.Count);
 

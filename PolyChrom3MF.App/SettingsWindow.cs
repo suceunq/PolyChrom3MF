@@ -48,7 +48,12 @@ public sealed class SettingsWindow : Window
             var detected = _printerDetection.Detect();
             if (detected is null) { MessageBox.Show("Aucun profil d’imprimante exploitable n’a été trouvé dans les slicers détectés."); return; }
             _printer.Text = detected.Name; _slots.Text = detected.MaterialSlots.ToString(); _nozzle.Text = detected.NozzleDiameter.ToString("0.###"); _layerHeight.Text = detected.LayerHeight.ToString("0.###");
-            if (detected.Filaments.Count > 0) { Value.FilamentColors.Clear(); Value.FilamentColors.AddRange(detected.Filaments.Select(filament => filament.Hex)); }
+            if (detected.Filaments.Count > 0)
+            {
+                Value.FilamentColors.Clear();
+                Value.FilamentColors.AddRange(detected.Filaments.Select(filament => filament.Hex));
+                Value.FilamentMaterials = Enumerable.Repeat("PLA", Value.FilamentColors.Count).ToList();
+            }
         };
         panel.Children.Add(detectPrinter);
         panel.Children.Add(new TextBlock { Text = "Nom de l’imprimante" }); panel.Children.Add(_printer);

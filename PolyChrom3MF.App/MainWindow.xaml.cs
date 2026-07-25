@@ -402,13 +402,15 @@ public partial class MainWindow : Window
 
     void ManageFilaments_Click(object sender, RoutedEventArgs e)
     {
-        using var dialog = new System.Windows.Forms.ColorDialog { FullOpen = true, AnyColor = true };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-        var hex = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
-        if (!_settings.FilamentColors.Contains(hex, StringComparer.OrdinalIgnoreCase)) _settings.FilamentColors.Add(hex);
+        var dialog = new FilamentColorsWindow(_settings.FilamentColors, _settings.FilamentMaterials) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _settings.FilamentColors = dialog.Colors.ToList();
+        _settings.FilamentMaterials = dialog.Materials.ToList();
+        _colorCount = _settings.FilamentColors.Count;
+        _settings.ColorCount = _colorCount;
         _settingsService.Save(_settings);
         if (UseFilaments.IsChecked == true && _doc is not null) { PushUndo(); GenerateProposals(); Render(); }
-        StatusText.Text = $"Couleur de filament {hex} enregistrée localement.";
+        StatusText.Text = $"{_settings.FilamentColors.Count} filaments PLA/PETG enregistrés ensemble.";
     }
 
     void EditSelectedColor_Click(object sender, RoutedEventArgs e)
@@ -1161,7 +1163,8 @@ public partial class MainWindow : Window
         try
         {
             var exportProposal = FinalProposal(SelectedProposalIndex());
-            var report = await Task.Run(() => _service.ExportAndValidate(_doc, exportProposal, dialog.FileName, _settings.VerifyAfterExport));
+            var materials = MaterialsFor(exportProposal);
+            var report = await Task.Run(() => _service.ExportAndValidate(_doc, exportProposal, dialog.FileName, _settings.VerifyAfterExport, materials));
             StatusText.Text = _settings.VerifyAfterExport ? "Export terminé et vérifié avec succès." : "Export terminé avec succès.";
             _lastSlicerFile = dialog.FileName; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             var slicerName = PreferredSlicerName();
@@ -1195,7 +1198,8 @@ public partial class MainWindow : Window
                 Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
             var path = Path.Combine(previewFolder, $"{safeName}_{_colorCount}Couleurs.3mf");
             var proposal = FinalProposal(SelectedProposalIndex());
-            await Task.Run(() => _service.ExportAndValidate(_doc, proposal, path, true));
+            var materials = MaterialsFor(proposal);
+            await Task.Run(() => _service.ExportAndValidate(_doc, proposal, path, true, materials));
             _lastSlicerFile = path;
             OpenInSlicer(path);
         }
@@ -1355,6 +1359,15 @@ public partial class MainWindow : Window
     ColorProposal FinalProposal(int index) => _doc is not null && index >= 0 && index < _layerBases.Count && index < _proposalLayers.Count
         ? Rename(_layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]), _proposals[index].Name, _proposals[index].Description)
         : _selected ?? throw new InvalidOperationException("Aucune proposition sélectionnée.");
+
+    IReadOnlyList<string> MaterialsFor(ColorProposal proposal)
+    {
+        var byColor = _settings.FilamentColors
+            .Select((hex, index) => (Hex: hex, Material: _settings.FilamentMaterials.ElementAtOrDefault(index) ?? "PLA"))
+            .GroupBy(item => item.Hex, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Material, StringComparer.OrdinalIgnoreCase);
+        return proposal.Colors.Select(color => byColor.GetValueOrDefault(color.Hex, "PLA")).ToList();
+    }
 
     string? PromptText(string title, string label, string initial)
     {

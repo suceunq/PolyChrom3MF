@@ -11,6 +11,11 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
+        "Les motifs répétés utilisent maintenant un raccord miroir continu, sans ligne de démarcation brutale.\n" +
+        "La projection triplanaire mélange les trois axes pour supprimer les coutures visibles entre les faces.\n" +
+        "L’échantillonnage bilinéaire améliore la netteté et la régularité des motifs PNG/JPG.\n" +
+        "La fenêtre « Gérer mes couleurs » permet de choisir de 2 à 32 filaments et de tous les régler en une seule fois.\n" +
+        "Chaque filament peut maintenant être défini en PLA ou PETG ; ce matériau est présélectionné dans les slicers compatibles.\n" +
         "Correction Snapmaker Orca : les couleurs sont désormais exportées avec l’attribut paint_color attendu par le slicer U1.\n" +
         "Les modèles colorés s’affichent réellement avec leurs filaments dans Snapmaker Orca au lieu d’apparaître entièrement bleus.\n" +
         "L’export utilise maintenant une structure de projet 3MF native avec objets parents, volumes, relations et profils de filaments.\n" +
