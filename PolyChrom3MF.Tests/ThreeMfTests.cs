@@ -128,6 +128,7 @@ public class ThreeMfTests
     [Fact] public void Lit_maillage_dans_fragment_production() { var d = new ThreeMfService().Read(MultipartSample()); Assert.Single(d.Objects); Assert.Equal(1, d.ComponentCount); Assert.Equal(10, d.SizeX); Assert.Contains("multipartie", d.Warning); }
     [Fact] public void Assemble_les_composants_et_ignore_les_maillages_non_instancies() { var d = new ThreeMfService().Read(ComponentTransformSample()); Assert.Single(d.Objects); Assert.Equal(20, d.SizeX, 6); Assert.Equal(110, d.Objects[0].Vertices.Min(vertex => vertex.X), 6); Assert.Equal(130, d.Objects[0].Vertices.Max(vertex => vertex.X), 6); }
     [Fact] public void Exporte_couleur_dans_fragment_production() { var s = new ThreeMfService(); var d = s.Read(MultipartSample()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); s.Export(d, new PaletteService().Create(1)[0], output); var reopened = s.Read(output); Assert.True(reopened.ExistingColorCount >= 1); Assert.Equal(1, reopened.TriangleCount); }
+    [Fact] public void Reconstruit_un_package_autonome_si_un_fragment_source_a_disparu() { var source = MultipartSample(); var s = new ThreeMfService(); var d = s.Read(source); using (var zip = ZipFile.Open(source, ZipArchiveMode.Update)) zip.GetEntry("3D/Objects/object_1.model")!.Delete(); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); s.Export(d, new PaletteService().Create(2)[0], output); var reopened = s.Read(output); Assert.Equal(d.TriangleCount, reopened.TriangleCount); Assert.Equal(d.Objects.Count, reopened.Objects.Count); }
     [Fact] public void Detecte_composant_et_couleur_existante() { var d = new ThreeMfService().Read(Sample(colors: true, components: true)); Assert.Equal(1, d.ComponentCount); Assert.Equal(1, d.ExistingColorCount); }
     [Fact] public void Convertit_les_pouces_en_millimetres() { var d = new ThreeMfService().Read(Sample(unit: "inch")); Assert.Equal(254, d.SizeX, 3); }
     [Fact] public void Refuse_extension_invalide() { var p = Path.GetTempFileName(); Assert.Throws<InvalidDataException>(() => new ThreeMfService().Read(p)); }
@@ -147,8 +148,44 @@ public class ThreeMfTests
     [Fact] public void Detecte_snapmaker_orca_actuel() { var folder = Path.Combine(Path.GetTempPath(), "Snapmaker_Orca", Guid.NewGuid().ToString()); Directory.CreateDirectory(folder); var executable = Path.Combine(folder, "snapmaker-orca.exe"); File.WriteAllBytes(executable, [0]); var detected = new SlicerDetectionService().Detect([executable]); Assert.Contains(detected, x => x.Name == "Snapmaker Orca" && x.Path == executable); }
     [Fact] public void Genere_huit_couleurs_distinctes() { var proposals = new PaletteService().Create(FunDocument(), fun: true, colorCount: 8); Assert.All(proposals, p => { Assert.Equal(8, p.Colors.Count); Assert.Equal(8, p.Colors.Select(c => c.Hex).Distinct().Count()); Assert.Equal(8, p.TriangleAssignments.SelectMany(x => x.Value).Distinct().Count()); }); }
     [Fact] public void Genere_et_repartit_deux_couleurs() { var proposals = new PaletteService().Create(FunDocument(), fun: true, colorCount: 2); Assert.All(proposals, proposal => { Assert.Equal(2, proposal.Colors.Count); Assert.Equal(2, proposal.TriangleAssignments.SelectMany(pair => pair.Value).Distinct().Count()); }); }
+    [Fact] public void Desactive_une_couleur_et_redistribue_toutes_ses_zones()
+    {
+        var proposal = new PaletteService().Create(FunDocument(), fun: true, colorCount: 4)[0];
+        var removed = 1;
+        Assert.True(PaletteService.DisableColor(proposal, removed));
+        Assert.Equal(3, proposal.Colors.Count);
+        Assert.All(proposal.Assignments.Values, value => Assert.InRange(value, 0, 2));
+        Assert.All(proposal.TriangleAssignments.SelectMany(pair => pair.Value), value => Assert.InRange(value, 0, 2));
+    }
+    [Fact] public void Refuse_de_desactiver_en_dessous_de_deux_couleurs()
+    {
+        var proposal = new PaletteService().Create(FunDocument(), colorCount: 2)[0];
+        Assert.False(PaletteService.DisableColor(proposal, 0));
+        Assert.Equal(2, proposal.Colors.Count);
+    }
     [Fact] public void Exporte_deux_couleurs_reelles() { var service = new ThreeMfService(); var document = service.Read(Sample(2)); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, new PaletteService().Create(document, colorCount: 2)[0], output); Assert.Equal(2, service.Read(output).ExistingColorCount); }
     [Fact] public void Exporte_huit_couleurs_reelles() { var service = new ThreeMfService(); var document = service.Read(Sample(8)); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, new PaletteService().Create(document, fun: true, colorCount: 8)[0], output); Assert.Equal(8, service.Read(output).ExistingColorCount); }
+    [Fact] public void Exporte_la_peinture_multimateriau_pour_orca_prusa_bambu_snapmaker_et_le_standard_3mf() { var service = new ThreeMfService(); var document = service.Read(Sample(2)); var proposal = new PaletteService().Create(document, colorCount: 2)[0] with { TriangleAssignments = new Dictionary<int, int[]> { [0] = [1], [1] = [0] } }; var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, proposal, output); using var zip = ZipFile.OpenRead(output); using var firstStream = zip.GetEntry("3D/Objects/object_1.model")!.Open(); var first = XDocument.Load(firstStream); using var secondStream = zip.GetEntry("3D/Objects/object_2.model")!.Open(); var second = XDocument.Load(secondStream); var firstTriangle = first.Descendants(ThreeMfService.Core + "triangle").Single(); var secondTriangle = second.Descendants(ThreeMfService.Core + "triangle").Single(); Assert.Equal("8", (string?)firstTriangle.Attribute(ThreeMfService.Slic3rPe + "mmu_segmentation")); Assert.Null(secondTriangle.Attribute(ThreeMfService.Slic3rPe + "mmu_segmentation")); Assert.Equal("8", (string?)firstTriangle.Attribute("paint_color")); Assert.Equal("4", (string?)secondTriangle.Attribute("paint_color")); Assert.Equal("1", (string?)firstTriangle.Attribute("p1")); using var mainStream = zip.GetEntry("3D/3dmodel.model")!.Open(); var main = XDocument.Load(mainStream); Assert.Contains(main.Descendants(ThreeMfService.Core + "metadata"), x => (string?)x.Attribute("name") == "slic3rpe:MmPaintingVersion" && x.Value == "1"); Assert.NotNull(zip.GetEntry("Metadata/model_settings.config")); Assert.NotNull(zip.GetEntry("Metadata/project_settings.config")); }
+    [Fact] public void Exporte_des_parametres_valides_et_portables_pour_les_slicers()
+    {
+        var source = Sample();
+        using (var zip = ZipFile.Open(source, ZipArchiveMode.Update))
+        using (var writer = new StreamWriter(zip.CreateEntry("Metadata/project_settings.config").Open()))
+            writer.Write("""{"raft_first_layer_expansion":"-1","use_relative_e_distances":"0","before_layer_change_gcode":"","z_hop_types":["Auto Lift"]}""");
+        var service = new ThreeMfService();
+        var document = service.Read(source);
+        var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf");
+        service.Export(document, new PaletteService().Create(document)[0], output);
+        using var result = ZipFile.OpenRead(output);
+        using var reader = new StreamReader(result.GetEntry("Metadata/project_settings.config")!.Open());
+        using var settings = JsonDocument.Parse(reader.ReadToEnd());
+        var root = settings.RootElement;
+        Assert.Equal("2", root.GetProperty("raft_first_layer_expansion").GetString());
+        Assert.Equal("1", root.GetProperty("use_relative_e_distances").GetString());
+        Assert.Equal("0", root.GetProperty("spiral_mode").GetString());
+        Assert.Contains("G92 E0", root.GetProperty("before_layer_change_gcode").GetString());
+        Assert.All(root.GetProperty("z_hop_types").EnumerateArray(), value => Assert.Equal("Normal Lift", value.GetString()));
+    }
     [Fact] public void Exporte_et_relit_sans_perte() { var p = Sample(2); var s = new ThreeMfService(); var d = s.Read(p); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); var report = s.ExportAndValidate(d, new PaletteService().Create(2)[0], output, true); var r = s.Read(output); Assert.Equal(2, r.Objects.Count); Assert.Equal(2, r.TriangleCount); Assert.Contains("dimensions identiques", report); Assert.True(r.ExistingColorCount >= 2); }
     [Fact] public void Peut_exporter_sur_le_fichier_source_sans_le_corrompre() { var path = Sample(); var service = new ThreeMfService(); var document = service.Read(path); service.Export(document, new PaletteService().Create(document)[0], path); var reopened = service.Read(path); Assert.Equal(document.TriangleCount, reopened.TriangleCount); Assert.True(reopened.ExistingColorCount >= 4); }
     [Fact] public void Export_preserve_les_entrees_originales() { var p = Sample(); using (var z = ZipFile.Open(p, ZipArchiveMode.Update)) using (var w = new StreamWriter(z.CreateEntry("Metadata/keep.txt").Open())) w.Write("conserver"); var s = new ThreeMfService(); var d = s.Read(p); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); s.Export(d, new PaletteService().Create(1)[0], output); using var result = ZipFile.OpenRead(output); Assert.NotNull(result.GetEntry("Metadata/keep.txt")); }

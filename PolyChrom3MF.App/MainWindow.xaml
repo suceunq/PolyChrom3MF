@@ -177,13 +177,13 @@
               <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10" MouseDown="Proposal_Click" Tag="{Binding}">
                 <StackPanel><TextBlock Text="{Binding Name}" Foreground="{DynamicResource PrimaryText}" FontWeight="Bold"/><TextBlock Text="{Binding Description}" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,2,0,7"/>
                   <ItemsControl ItemsSource="{Binding Colors}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate>
-                    <StackPanel Width="68" Margin="0,0,5,5" ToolTipService.InitialShowDelay="200" ToolTipService.ShowDuration="10000" MouseRightButtonDown="ProposalColor_RightClick">
+                    <StackPanel Width="68" Margin="0,0,5,5" ToolTipService.InitialShowDelay="200" ToolTipService.ShowDuration="10000" MouseLeftButtonDown="ProposalColor_LeftClick" MouseRightButtonDown="ProposalColor_RightClick">
                       <StackPanel.ToolTip>
                         <ToolTip>
                           <StackPanel>
                             <TextBlock Text="{Binding Name}" Foreground="White" FontWeight="Bold"/>
                             <TextBlock Text="{Binding Hex}" Foreground="#D9E2F0" Margin="0,2,0,0"/>
-                            <TextBlock Text="Clic droit : modifier" Foreground="#AFC4E6" Margin="0,5,0,0"/>
+                            <TextBlock Text="Clic gauche : modifier · clic droit : désactiver" Foreground="#AFC4E6" Margin="0,5,0,0"/>
                           </StackPanel>
                         </ToolTip>
                       </StackPanel.ToolTip>

@@ -1,10 +1,10 @@
 #ifndef AppPublishDir
-  #define AppPublishDir "publish\PolyChrom3MF_2.0.2"
+  #define AppPublishDir "publish\PolyChrom3MF_2.0.8"
 #endif
 
 [Setup]
 AppName=PolyChrom 3MF
-AppVersion=2.0.2
+AppVersion=2.0.8
 AppPublisher=bob59
 DefaultDirName={localappdata}\Programs\PolyChrom 3MF
 DefaultGroupName=PolyChrom 3MF

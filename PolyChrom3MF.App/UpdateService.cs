@@ -11,6 +11,14 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
+        "Correction Snapmaker Orca : les couleurs sont désormais exportées avec l’attribut paint_color attendu par le slicer U1.\n" +
+        "Les modèles colorés s’affichent réellement avec leurs filaments dans Snapmaker Orca au lieu d’apparaître entièrement bleus.\n" +
+        "L’export utilise maintenant une structure de projet 3MF native avec objets parents, volumes, relations et profils de filaments.\n" +
+        "Export multicolore compatible avec Snapmaker Orca, OrcaSlicer, PrusaSlicer et Bambu Studio.\n" +
+        "Les affectations de filaments sont enregistrées à la fois en propriétés 3MF standard et en peinture multimatériau native.\n" +
+        "Correction de l’export des modèles 3MF multiparties avec fragments manquants ou chemins non standard.\n" +
+        "Les exports sont reconstruits en package autonome lorsque nécessaire et s’ouvrent dans Snapmaker Orca.\n" +
+        "Le bouton « Ouvrir dans mon slicer » génère désormais la version colorée actuelle au lieu d’envoyer le fichier source original.\n" +
         "Plusieurs motifs PNG/JPG indépendants peuvent maintenant coexister sur des objets différents.\n" +
         "Chaque motif conserve sa cible, son image, son calque et ses réglages de transformation.\n" +
         "Transformer ou retirer le calque actif ne modifie plus les autres motifs.\n" +

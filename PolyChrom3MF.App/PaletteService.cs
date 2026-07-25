@@ -35,6 +35,44 @@ public sealed class PaletteService
     static readonly string[] FunNames = ["Fun 1 — Aurore ondulée", "Fun 2 — Camouflage organique", "Fun 3 — Double personnalité", "Fun 4 — Graffiti pop"];
     static readonly string[] FunDescriptions = ["Dégradé vivant aux frontières ondulées", "Taches organiques réparties sur toute la sculpture", "Séparation dramatique avec accents contrastés", "Réseau de lignes et symboles abstraits"];
 
+    public static bool DisableColor(ColorProposal proposal, int colorIndex)
+    {
+        if (proposal.Colors.Count <= 2 || colorIndex < 0 || colorIndex >= proposal.Colors.Count) return false;
+        var replacementOldIndex = FindReplacementColorIndex(proposal, colorIndex);
+        if (replacementOldIndex < 0) return false;
+        foreach (var key in proposal.Assignments.Keys.ToList())
+            proposal.Assignments[key] = RemapColorIndex(proposal.Assignments[key], colorIndex, replacementOldIndex);
+        foreach (var values in proposal.TriangleAssignments.Values)
+            for (var index = 0; index < values.Length; index++)
+                values[index] = RemapColorIndex(values[index], colorIndex, replacementOldIndex);
+        proposal.Colors.RemoveAt(colorIndex);
+        return true;
+    }
+
+    public static int FindReplacementColorIndex(ColorProposal proposal, int colorIndex)
+    {
+        if (proposal.Colors.Count <= 1 || colorIndex < 0 || colorIndex >= proposal.Colors.Count) return -1;
+        var removed = proposal.Colors[colorIndex].Color;
+        return Enumerable.Range(0, proposal.Colors.Count)
+            .Where(index => index != colorIndex)
+            .MinBy(index =>
+            {
+                var candidate = proposal.Colors[index].Color;
+                var red = candidate.R - removed.R;
+                var green = candidate.G - removed.G;
+                var blue = candidate.B - removed.B;
+                return red * red + green * green + blue * blue;
+            });
+    }
+
+    public static int RemapColorIndex(int value, int removedIndex, int replacementOldIndex)
+    {
+        if (value < 0) return value;
+        var replacement = replacementOldIndex > removedIndex ? replacementOldIndex - 1 : replacementOldIndex;
+        if (value == removedIndex) return replacement;
+        return value > removedIndex ? value - 1 : value;
+    }
+
     public List<ColorProposal> Create(int objectCount, IReadOnlyList<string>? available = null, int generation = 0, bool fun = false, int colorCount = 4)
     {
         colorCount = Math.Clamp(colorCount, 2, 32);

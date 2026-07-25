@@ -289,17 +289,48 @@ public partial class MainWindow : Window
         StatusText.Text = $"{proposal.Name} sélectionnée.";
     }
 
+    bool TryGetProposalColor(object sender, out int proposalIndex, out int colorIndex)
+    {
+        proposalIndex = -1;
+        colorIndex = -1;
+        if ((sender as FrameworkElement)?.DataContext is not PaletteColor color) return false;
+        proposalIndex = _proposals.FindIndex(proposal => proposal.Colors.Any(candidate => ReferenceEquals(candidate, color)));
+        if (proposalIndex < 0) return false;
+        var proposal = _proposals[proposalIndex];
+        colorIndex = proposal.Colors.FindIndex(candidate => ReferenceEquals(candidate, color));
+        return colorIndex >= 0;
+    }
+
+    void ProposalColor_LeftClick(object sender, MouseButtonEventArgs e)
+    {
+        if (!TryGetProposalColor(sender, out var proposalIndex, out var colorIndex)) return;
+        e.Handled = true;
+        SelectProposal(proposalIndex);
+        EditProposalColor(proposalIndex, colorIndex);
+    }
+
     void ProposalColor_RightClick(object sender, MouseButtonEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is not PaletteColor color) return;
-        var proposalIndex = _proposals.FindIndex(proposal => proposal.Colors.Any(candidate => ReferenceEquals(candidate, color)));
-        if (proposalIndex < 0) return;
+        if (!TryGetProposalColor(sender, out var proposalIndex, out var colorIndex)) return;
+        e.Handled = true;
+        SelectProposal(proposalIndex);
+        if (_proposals[proposalIndex].Colors.Count <= 2)
+        {
+            StatusText.Text = "Deux couleurs minimum doivent rester actives.";
+            return;
+        }
+        DisableProposalColor(proposalIndex, colorIndex);
+    }
+
+    void EditProposalColor(int proposalIndex, int colorIndex)
+    {
+        if (proposalIndex < 0 || proposalIndex >= _proposals.Count) return;
         var proposal = _proposals[proposalIndex];
-        var colorIndex = proposal.Colors.FindIndex(candidate => ReferenceEquals(candidate, color));
-        if (colorIndex < 0) return;
+        if (colorIndex < 0 || colorIndex >= proposal.Colors.Count) return;
+        var color = proposal.Colors[colorIndex];
         using var dialog = new System.Windows.Forms.ColorDialog { FullOpen = true, AnyColor = true };
         dialog.Color = System.Drawing.Color.FromArgb(color.Color.R, color.Color.G, color.Color.B);
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) { e.Handled = true; return; }
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
         PushUndo();
         SelectProposal(proposalIndex);
         var hex = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
@@ -309,7 +340,30 @@ public partial class MainWindow : Window
         Render();
         _dirty = true;
         StatusText.Text = $"Couleur {colorIndex + 1} de {proposal.Name} remplacée par {hex}.";
-        e.Handled = true;
+    }
+
+    void DisableProposalColor(int proposalIndex, int colorIndex)
+    {
+        if (proposalIndex < 0 || proposalIndex >= _proposals.Count || _proposals[proposalIndex].Colors.Count <= 2) return;
+        PushUndo();
+        var proposal = _proposals[proposalIndex];
+        var removedName = proposal.Colors[colorIndex].Name;
+        var replacementOldIndex = PaletteService.FindReplacementColorIndex(proposal, colorIndex);
+        if (!PaletteService.DisableColor(proposal, colorIndex)) return;
+        if (proposalIndex < _layerBases.Count) PaletteService.DisableColor(_layerBases[proposalIndex], colorIndex);
+        if (proposalIndex < _proposalLayers.Count)
+            foreach (var layer in _proposalLayers[proposalIndex])
+                foreach (var values in layer.TriangleOverrides.Values)
+                    for (var index = 0; index < values.Length; index++)
+                        values[index] = PaletteService.RemapColorIndex(values[index], colorIndex, replacementOldIndex);
+        SelectProposal(proposalIndex);
+        RefreshBindings();
+        RefreshLayers();
+        Render();
+        _dirty = true;
+        ProposalsTitle.Text = $"4 PROPOSITIONS · {proposal.Colors.Count} COULEURS ACTIVES";
+        StatsText.Text = _doc is null ? StatsText.Text : $"{_doc.Objects.Count} objets · {_doc.TriangleCount:N0} triangles · {proposal.Colors.Count} couleurs";
+        StatusText.Text = $"{removedName} désactivée. Les zones concernées ont été redistribuées automatiquement.";
     }
 
     void Regenerate_Click(object sender, RoutedEventArgs e)
@@ -1129,11 +1183,28 @@ public partial class MainWindow : Window
         catch (Exception ex) { MessageBox.Show($"Impossible d’ouvrir {PreferredSlicerName()}.\n\n{ex.Message}", "Slicer impossible à lancer", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
-    void OpenPreferredSlicer_Click(object sender, RoutedEventArgs e)
+    async void OpenPreferredSlicer_Click(object sender, RoutedEventArgs e)
     {
-        var path = File.Exists(_lastSlicerFile) ? _lastSlicerFile : _doc?.Path;
-        if (path is null || !File.Exists(path)) { MessageBox.Show("Importez ou exportez d’abord un fichier 3MF ou STL."); return; }
-        OpenInSlicer(path);
+        if (_doc is null || _selected is null) { MessageBox.Show("Importez et sélectionnez une proposition avant d’ouvrir le slicer."); return; }
+        SetBusy(true, $"Préparation du modèle coloré pour {PreferredSlicerName()}…");
+        try
+        {
+            var previewFolder = Path.Combine(Path.GetTempPath(), "PolyChrom3MF", "SlicerPreview");
+            Directory.CreateDirectory(previewFolder);
+            var safeName = string.Concat(Path.GetFileNameWithoutExtension(_doc.Path).Select(character =>
+                Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+            var path = Path.Combine(previewFolder, $"{safeName}_{_colorCount}Couleurs.3mf");
+            var proposal = FinalProposal(SelectedProposalIndex());
+            await Task.Run(() => _service.ExportAndValidate(_doc, proposal, path, true));
+            _lastSlicerFile = path;
+            OpenInSlicer(path);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Le modèle coloré n’a pas pu être préparé pour {PreferredSlicerName()}.\n\n{ex.Message}", "Ouverture dans le slicer impossible", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Préparation pour le slicer impossible.";
+        }
+        finally { SetBusy(false); }
     }
 
     void EnsurePreferredSlicer()
