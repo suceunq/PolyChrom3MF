@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.11
+
+- Nouvel atelier de placement intégré à la fenêtre principale pour les motifs PNG/JPEG.
+- L’interface normale est remplacée temporairement par la vue 3D et les réglages du motif.
+- Navigation inchangée : clic gauche pour tourner, clic droit pour déplacer et molette pour zoomer.
+- Aperçu asynchrone adaptatif et rendu LOD pour conserver une interface fluide sur les gros modèles.
+- Reconstruction automatique du cache LOD après subdivision ou application définitive d’un motif.
+- Caméra réutilisée pendant la rotation afin de supprimer les allocations à chaque mouvement de souris.
+- Le moteur GPU masqué ne reçoit plus de mises à jour inutiles pendant le rendu compatible.
+- Bouton « Appliquer le motif » fixé et toujours visible.
+- Verrouillage des commandes incompatibles pendant l’aperçu pour protéger le projet.
+
 ## 2.0.10
 
 - Bouton « Appliquer les filaments » fixé en bas de la fenêtre et toujours accessible.

@@ -11,6 +11,12 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
+        "Nouvel atelier de placement des motifs PNG/JPEG intégré directement à la fenêtre principale.\n" +
+        "L’interface habituelle revient automatiquement après validation ou annulation.\n" +
+        "Navigation 3D inchangée : clic gauche pour tourner, clic droit pour déplacer et molette pour zoomer.\n" +
+        "L’aperçu est calculé en arrière-plan avec temporisation adaptative pour rester fluide sur les gros modèles.\n" +
+        "Le cache LOD est reconstruit après subdivision et la caméra est réutilisée pour fluidifier l’interface principale.\n" +
+        "Le bouton « Appliquer le motif » reste toujours visible et les commandes incompatibles sont temporairement protégées.\n" +
         "Le bouton « Appliquer les filaments » reste maintenant toujours visible en bas de la fenêtre de gestion.\n" +
         "La couture blanche des projections cylindriques et des motifs répétés est supprimée par une fusion périodique des bords.\n" +
         "Les motifs monochromes triplanaires conservent leurs traits au changement d’axe au lieu de créer une bande claire.\n" +

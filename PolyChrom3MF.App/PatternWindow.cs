@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using System.Windows.Input;
 using System.Windows.Threading;
 using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBox = System.Windows.Controls.ComboBox;
@@ -14,7 +15,7 @@ using Orientation = System.Windows.Controls.Orientation;
 
 namespace PolyChrom3MF.App;
 
-public sealed class PatternWindow : Window
+public sealed class PatternWindow : System.Windows.Controls.UserControl
 {
     readonly string _imagePath;
     readonly ComboBox _mode = new();
@@ -38,6 +39,8 @@ public sealed class PatternWindow : Window
     readonly CheckBox _backFace = new() { Content = "Prévisualiser aussi les faces arrière", IsChecked = true };
     readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     readonly TextBlock _previewStatus = new() { Text = "L’aperçu se met à jour au relâchement du curseur.", Margin = new Thickness(0, 7, 0, 0) };
+    readonly TaskCompletionSource<bool> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    bool _completed;
 
     public PatternSettings Value { get; private set; }
     public event Action<PatternSettings>? PreviewRequested;
@@ -45,9 +48,16 @@ public sealed class PatternWindow : Window
     public PatternWindow(string imagePath, IReadOnlyList<ModelObject> objects, IReadOnlyList<PaletteColor> colors, PatternSettings? current = null, string? displayName = null)
     {
         _imagePath = imagePath;
+        var triangleCount = objects.Sum(item => (long)item.Triangles.Count);
+        _previewTimer.Interval = TimeSpan.FromMilliseconds(triangleCount switch
+        {
+            > 2_000_000 => 450,
+            > 500_000 => 300,
+            _ => 160
+        });
         displayName ??= Path.GetFileName(imagePath);
         Value = current is null ? new PatternSettings(imagePath, DisplayName: displayName) : current with { ImagePath = imagePath, DisplayName = displayName };
-        Title = "Appliquer un motif image"; Width = 650; MinHeight = 700; MaxHeight = Math.Max(700, SystemParameters.WorkArea.Height * .92); SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        MinWidth = 430;
         _mode.ItemsSource = new[] { new Option<PatternMode>("Projection frontale", PatternMode.Front), new Option<PatternMode>("Enveloppement cylindrique", PatternMode.Cylindrical), new Option<PatternMode>("Motif répété", PatternMode.Repeated), new Option<PatternMode>("Projection triplanaire", PatternMode.Triplanar) }; _mode.DisplayMemberPath = nameof(Option<PatternMode>.Label); _mode.SelectedIndex = (int)Value.Mode;
         var targets = new List<Option<int>> { new("Toute la figurine", -1) }; targets.AddRange(objects.Select(obj => new Option<int>(obj.ToString(), obj.Index))); _target.ItemsSource = targets; _target.DisplayMemberPath = nameof(Option<int>.Label); _target.SelectedItem = targets.FirstOrDefault(item => item.Value == Value.TargetObject) ?? targets[0];
         var logoColors = colors.Select((color, index) => new Option<int>($"{color.Name}  {color.Hex}", index)).ToList();
@@ -68,13 +78,35 @@ public sealed class PatternWindow : Window
         _mirrorY.Checked += (_, _) => QueuePreview(); _mirrorY.Unchecked += (_, _) => QueuePreview();
         _backFace.Checked += (_, _) => QueuePreview(); _backFace.Unchecked += (_, _) => QueuePreview();
         Loaded += (_, _) => QueuePreview();
-        Closed += (_, _) => _previewTimer.Stop();
+        Unloaded += (_, _) => _previewTimer.Stop();
 
-        var panel = new StackPanel { Margin = new Thickness(24) };
+        var panel = new StackPanel { Margin = new Thickness(20, 18, 20, 12) };
         panel.Children.Add(new TextBlock { Text = "MOTIF IMAGE", FontSize = 22, FontWeight = FontWeights.Bold });
         panel.Children.Add(new TextBlock { Text = "Le motif sera converti vers les couleurs de filament de chaque proposition. Les pixels transparents conservent la coloration existante.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 14), Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"] });
-        panel.Children.Add(new TextBlock { Text = "Aperçu en direct : déplacez les curseurs pour voir le résultat sur la figurine derrière cette fenêtre.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), FontWeight = FontWeights.SemiBold, Foreground = (System.Windows.Media.Brush)Application.Current.Resources["Accent"] });
-        var preview = new Image { Source = LoadPreview(imagePath), Height = 190, Stretch = System.Windows.Media.Stretch.Uniform, Margin = new Thickness(0, 0, 0, 14) };
+        var navigationPanel = new Border
+        {
+            Background = (System.Windows.Media.Brush)Application.Current.Resources["InputBackground"],
+            BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["Accent"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(10),
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        var navigationContent = new StackPanel();
+        navigationContent.Children.Add(new TextBlock
+        {
+            Text = "Navigation 3D : clic gauche = tourner la pièce · clic droit = déplacer la vue · molette = zoomer. Positionnez le motif avec les réglages ci-dessous.",
+            TextWrapping = TextWrapping.Wrap,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 7),
+            Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"]
+        });
+        var reset = new Button { Content = "Réinitialiser le placement", HorizontalAlignment = HorizontalAlignment.Left };
+        reset.Click += (_, _) => ResetPlacement();
+        navigationContent.Children.Add(reset);
+        navigationPanel.Child = navigationContent;
+        panel.Children.Add(navigationPanel);
+        var preview = new Image { Source = LoadPreview(imagePath), Height = 145, Stretch = System.Windows.Media.Stretch.Uniform, Margin = new Thickness(0, 0, 0, 12) };
         panel.Children.Add(new Border { Background = (System.Windows.Media.Brush)Application.Current.Resources["InputBackground"], BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["PanelBorder"], BorderThickness = new Thickness(1), Padding = new Thickness(8), Child = preview });
         panel.Children.Add(Field("Application", _target)); panel.Children.Add(Field("Projection", _mode)); panel.Children.Add(_repeatAcrossModel); panel.Children.Add(_variants);
         var logoPanel = new StackPanel { Margin = new Thickness(0, 12, 0, 2) };
@@ -87,18 +119,65 @@ public sealed class PatternWindow : Window
         panel.Children.Add(SliderField("Taille du motif", _scale, "%")); panel.Children.Add(SliderField("Largeur libre", _stretchX, "%")); panel.Children.Add(SliderField("Hauteur libre", _stretchY, "%")); panel.Children.Add(SliderField("Rotation", _rotation, "°")); panel.Children.Add(SliderField("Décalage horizontal", _offsetX, "%")); panel.Children.Add(SliderField("Décalage vertical", _offsetY, "%")); panel.Children.Add(SliderField("Nombre de copies", _copies, "")); panel.Children.Add(SliderField("Espacement des copies", _spacing, "%")); panel.Children.Add(_mirrorX); panel.Children.Add(_mirrorY); panel.Children.Add(_backFace);
         _previewStatus.Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryText"];
         panel.Children.Add(_previewStatus);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 18, 0, 0) };
-        var cancel = new Button { Content = "Annuler", IsCancel = true, MinWidth = 90 }; var apply = new Button { Content = "Appliquer le motif", IsDefault = true, MinWidth = 145 };
-        apply.Click += Apply; buttons.Children.Add(cancel); buttons.Children.Add(apply); panel.Children.Add(buttons);
-        Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancel = new Button { Content = "Annuler", MinWidth = 90 };
+        cancel.Click += (_, _) => Complete(false);
+        var apply = new Button { Content = "Appliquer le motif", IsDefault = true, MinWidth = 160 };
+        apply.Click += Apply; buttons.Children.Add(cancel); buttons.Children.Add(apply);
+        var footer = new Border
+        {
+            Padding = new Thickness(20, 12, 20, 16),
+            Background = (System.Windows.Media.Brush)Application.Current.Resources["PanelBackground"],
+            BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["PanelBorder"],
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Child = buttons
+        };
+        var layout = new Grid();
+        layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var scroller = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        Grid.SetRow(scroller, 0); layout.Children.Add(scroller);
+        Grid.SetRow(footer, 1); layout.Children.Add(footer);
+        Content = layout;
+        PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key != Key.Escape) return;
+            args.Handled = true;
+            Complete(false);
+        };
         UpdateLogoControls();
     }
+
+    public Task<bool> ShowEditorAsync() => _completion.Task;
 
     void Apply(object sender, RoutedEventArgs e)
     {
         _previewTimer.Stop();
         Value = ReadSettings();
-        DialogResult = true;
+        Complete(true);
+    }
+
+    void ResetPlacement()
+    {
+        _scale.Value = 100;
+        _stretchX.Value = 100;
+        _stretchY.Value = 100;
+        _rotation.Value = 0;
+        _offsetX.Value = 0;
+        _offsetY.Value = 0;
+        _copies.Value = 1;
+        _spacing.Value = 0;
+        _mirrorX.IsChecked = false;
+        _mirrorY.IsChecked = false;
+        QueuePreview();
+    }
+
+    void Complete(bool accepted)
+    {
+        if (_completed) return;
+        _completed = true;
+        _previewTimer.Stop();
+        _completion.TrySetResult(accepted);
     }
 
     PatternSettings ReadSettings() => new(
