@@ -22,11 +22,10 @@ namespace PolyChrom3MF.App;
 
 public partial class MainWindow : Window
 {
-    // Models up to two million triangles stay at full fidelity. The former
-    // 1.2M cut-off simplified the 1.44M-triangle test figurine and could merge
-    // thin, nearby surfaces into large fan-shaped preview triangles.
-    const long FullDetailTriangleLimit = 2_000_000;
-    const int LargeModelPreviewTarget = 700_000;
+    // Keep the full source mesh for export, but cap the interactive WPF preview.
+    // The voxel LOD preserves the overall shape while avoiding camera lag.
+    const long FullDetailTriangleLimit = 500_000;
+    const int LargeModelPreviewTarget = 300_000;
     readonly ThreeMfService _service = new();
     readonly StlService _stlService = new();
     readonly PaletteService _palettes = new();
@@ -60,9 +59,10 @@ public partial class MainWindow : Window
     List<List<ColorLayer>> _proposalLayers = [];
     ColorProposal? _selected;
     PatternSettings? _pattern;
+    PatternWindow? _activePatternEditor;
     System.Windows.Point _last;
     double _yaw = -40, _pitch = -25, _zoom = 1;
-    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _shutdownForUpdate;
+    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _paintModeBeforePattern, _shutdownForUpdate;
     int _generation, _colorCount = 4;
     int _lastSelectionObject = -1, _lastSelectionTriangle = -1;
     string? _lastSlicerFile;
@@ -122,11 +122,8 @@ public partial class MainWindow : Window
             if (_doc.TriangleCount > FullDetailTriangleLimit)
                 await Task.Run(() => GC.Collect(2, GCCollectionMode.Aggressive, true, true));
             if (_doc.TriangleCount > FullDetailTriangleLimit)
-            {
                 SetActivity(true, $"Optimisation de l’aperçu de {_doc.TriangleCount:N0} faces…");
-                _previewMeshes = await Task.Run(() => BuildPreviewMeshes(_doc));
-            }
-            else _previewMeshes.Clear();
+            await RebuildPreviewMeshesAsync(_doc);
             _pattern = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
             _lastSlicerFile = path; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             FileText.Text = Path.GetFileName(path);
@@ -492,6 +489,11 @@ public partial class MainWindow : Window
     async void ImportPattern_Click(object sender, RoutedEventArgs e)
     {
         if (_doc is null || _selected is null) { MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Motif image"); return; }
+        if (_activePatternEditor is not null)
+        {
+            _activePatternEditor.Focus();
+            return;
+        }
         var file = new OpenFileDialog { Filter = "Images compatibles (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|Images PNG (*.png)|*.png|Images JPEG (*.jpg;*.jpeg)|*.jpg;*.jpeg", CheckFileExists = true, Title = "Choisir le motif à appliquer" };
         if (file.ShowDialog() != true) return;
         PatternWindow dialog;
@@ -515,9 +517,22 @@ public partial class MainWindow : Window
             preparedImage = await Task.Run(() => PatternService.PrepareImage(sourceImage, removeBackground, tolerance));
             var selectedObject = ObjectsList.SelectedItem as ModelObject;
             var initial = new PatternSettings(preparedImage, TargetObject: selectedObject?.Index ?? -1, DisplayName: Path.GetFileName(file.FileName));
-            dialog = new PatternWindow(preparedImage, _doc.Objects, _selected.Colors, initial, Path.GetFileName(file.FileName)) { Owner = this };
+            dialog = new PatternWindow(preparedImage, _doc.Objects, _selected.Colors, initial, Path.GetFileName(file.FileName));
             dialog.PreviewRequested += PreviewPattern;
-            var accepted = dialog.ShowDialog() == true;
+            _activePatternEditor = dialog;
+            PatternEditorHost.Content = dialog;
+            SetPatternEditingUi(true);
+            bool accepted;
+            try
+            {
+                accepted = await dialog.ShowEditorAsync();
+            }
+            finally
+            {
+                _activePatternEditor = null;
+                PatternEditorHost.Content = null;
+                SetPatternEditingUi(false);
+            }
             Interlocked.Increment(ref previewRevision);
             previewCancellation?.Cancel();
             dialog.PreviewRequested -= PreviewPattern;
@@ -533,6 +548,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _activePatternEditor = null;
+            PatternEditorHost.Content = null;
+            SetPatternEditingUi(false);
             Interlocked.Increment(ref previewRevision);
             previewCancellation?.Cancel();
             _proposals = proposalsBeforePreview;
@@ -561,6 +579,8 @@ public partial class MainWindow : Window
                     return _patternGeometryService.Build(_doc, working, settings, modes, targetProposals: targets);
                 });
                 _doc = geometry.Document;
+                SetActivity(true, $"Optimisation de l’affichage de {_doc.TriangleCount:N0} faces…");
+                await RebuildPreviewMeshesAsync(_doc);
                 _layerBases = geometry.BaseProposals.Select(Clone).ToList();
                 _proposalLayers = _layerBases.Select(_ => new List<ColorLayer>
                 {
@@ -624,20 +644,23 @@ public partial class MainWindow : Window
             {
                 StatusText.Text = "Calcul de l’aperçu du motif…";
                 dialog.SetPreviewStatus("Calcul de l’aperçu en cours…");
-                var proposal = Clone(previewBase[selectedIndex]);
                 var previewMode = settings.FourVariants
                     ? new[] { PatternMode.Front, PatternMode.Cylindrical, PatternMode.Repeated, PatternMode.Triplanar }[Math.Min(selectedIndex, 3)]
                     : settings.Mode;
-                var result = await Task.Run(() => _patternService.Apply(_doc, proposal, settings, previewMode, cancellation.Token), cancellation.Token);
+                var previewResult = await Task.Run(() =>
+                {
+                    var proposal = Clone(previewBase[selectedIndex]);
+                    var result = _patternService.Apply(_doc, proposal, settings, previewMode, cancellation.Token);
+                    return (Proposal: proposal, Result: result);
+                }, cancellation.Token);
                 if (cancellation.IsCancellationRequested || revision != previewRevision) return;
                 var preview = previewBase.ToList();
-                preview[selectedIndex] = Rename(proposal, $"Aperçu — {PatternModeName(previewMode)}", $"Aperçu en direct · {PatternModeName(previewMode).ToLowerInvariant()}");
+                preview[selectedIndex] = Rename(previewResult.Proposal, $"Aperçu — {PatternModeName(previewMode)}", $"Aperçu en direct · {PatternModeName(previewMode).ToLowerInvariant()}");
                 _proposals = preview;
-                SelectProposal(selectedIndex);
-                RefreshBindings();
+                _selected = preview[selectedIndex];
                 Render();
-                StatusText.Text = $"Aperçu actualisé sur {result.ColoredTriangles:N0} triangles.";
-                dialog.SetPreviewStatus($"Aperçu actualisé · {result.ColoredTriangles:N0} triangles.");
+                StatusText.Text = $"Aperçu actualisé sur {previewResult.Result.ColoredTriangles:N0} triangles.";
+                dialog.SetPreviewStatus($"Aperçu actualisé · {previewResult.Result.ColoredTriangles:N0} triangles.");
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
@@ -1437,6 +1460,7 @@ public partial class MainWindow : Window
                 var geometry = await Task.Run(() => _patternGeometryService.Build(_doc, _proposals, style.Pattern,
                     Enumerable.Repeat(style.Pattern.Mode, _proposals.Count).ToArray(), targetProposals: new HashSet<int> { proposalIndex }));
                 _doc = geometry.Document; _proposals = geometry.Proposals; _pattern = style.Pattern;
+                await RebuildPreviewMeshesAsync(_doc);
                 _layerBases = geometry.BaseProposals.Select(Clone).ToList();
                 _proposalLayers = _proposals.Select((proposal, index) => new List<ColorLayer>
                 {
@@ -1462,6 +1486,13 @@ public partial class MainWindow : Window
             result[obj.Index] = SimplifyForPreview(obj, target);
         }
         return result;
+    }
+
+    async Task RebuildPreviewMeshesAsync(ModelDocument document)
+    {
+        _previewMeshes = document.TriangleCount > FullDetailTriangleLimit
+            ? await Task.Run(() => BuildPreviewMeshes(document))
+            : [];
     }
 
     internal static PreviewMesh SimplifyForPreview(ModelObject obj, int targetTriangles)
@@ -1615,8 +1646,33 @@ public partial class MainWindow : Window
         var (direction, up) = OrbitFrame(_yaw, _pitch);
         var distance = _radius * 3.0 * _zoom;
         var position = _center + direction * distance; var look = _center - position;
-        Viewer.Camera = _perspective ? new PerspectiveCamera(position, look, up, 42) : new OrthographicCamera(position, look, up, _radius * 2.4 * _zoom);
-        _gpuViewport.SetCamera(_center, _radius, _yaw, _pitch, _zoom);
+        if (_perspective)
+        {
+            if (Viewer.Camera is not PerspectiveCamera camera || camera.IsFrozen)
+                Viewer.Camera = new PerspectiveCamera(position, look, up, 42);
+            else
+            {
+                camera.Position = position;
+                camera.LookDirection = look;
+                camera.UpDirection = up;
+                camera.FieldOfView = 42;
+            }
+        }
+        else
+        {
+            var width = _radius * 2.4 * _zoom;
+            if (Viewer.Camera is not OrthographicCamera camera || camera.IsFrozen)
+                Viewer.Camera = new OrthographicCamera(position, look, up, width);
+            else
+            {
+                camera.Position = position;
+                camera.LookDirection = look;
+                camera.UpDirection = up;
+                camera.Width = width;
+            }
+        }
+        if (GpuHost.Visibility == Visibility.Visible)
+            _gpuViewport.SetCamera(_center, _radius, _yaw, _pitch, _zoom);
     }
 
     internal static (Vector3D Direction, Vector3D Up) OrbitFrame(double yawDegrees, double pitchDegrees)
@@ -1657,6 +1713,13 @@ public partial class MainWindow : Window
     async void Viewer_MouseDown(object sender, MouseButtonEventArgs e)
     {
         _last = e.GetPosition(Viewer);
+        if (_activePatternEditor is not null &&
+            e.ChangedButton is MouseButton.Left or MouseButton.Right)
+        {
+            Viewer.CaptureMouse();
+            e.Handled = true;
+            return;
+        }
         if (PaintMode.IsChecked == true && e.ChangedButton == MouseButton.Left)
         {
             if (PaintTool.SelectedIndex >= 1)
@@ -2121,6 +2184,40 @@ public partial class MainWindow : Window
         try { DonationService.Open(); }
         catch (Exception ex) { MessageBox.Show($"Impossible d’ouvrir la page PayPal.\n\n{ex.Message}", "Soutenir PolyChrom 3MF", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
+
+    void SetPatternEditingUi(bool active)
+    {
+        if (active)
+        {
+            _paintModeBeforePattern = PaintMode.IsChecked == true;
+            PaintMode.IsChecked = false;
+            PaintModeMenu.IsChecked = false;
+            MainMenu.Visibility = Visibility.Collapsed;
+            MainToolbar.Visibility = Visibility.Collapsed;
+            LeftPanel.Visibility = Visibility.Collapsed;
+            RightPanel.Visibility = Visibility.Collapsed;
+            PatternEditorPanel.Visibility = Visibility.Visible;
+            LeftColumn.Width = new GridLength(0);
+            RightColumn.Width = new GridLength(520);
+            Viewer.Cursor = System.Windows.Input.Cursors.Arrow;
+            StatusText.Text = "Atelier motif : gauche = rotation · droit = déplacement · molette = zoom.";
+        }
+        else
+        {
+            PatternEditorPanel.Visibility = Visibility.Collapsed;
+            RightPanel.Visibility = Visibility.Visible;
+            LeftPanel.Visibility = Visibility.Visible;
+            MainToolbar.Visibility = Visibility.Visible;
+            MainMenu.Visibility = Visibility.Visible;
+            LeftColumn.Width = new GridLength(280);
+            RightColumn.Width = new GridLength(370);
+            PaintMode.IsChecked = _paintModeBeforePattern;
+            PaintModeMenu.IsChecked = _paintModeBeforePattern;
+            _paintModeBeforePattern = false;
+        }
+        if (!active && _doc is not null)
+            StatusText.Text = "Motif prêt — vous pouvez continuer à travailler sur le modèle.";
+    }
     async void Update_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(false);
 
     async Task CheckForUpdatesAsync(bool automatic)
@@ -2162,7 +2259,7 @@ public partial class MainWindow : Window
         finally { IsEnabled = true; SetActivity(false); }
     }
     void About_Click(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
-    void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return; if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e); }
+    void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if (_activePatternEditor is not null || (Keyboard.Modifiers & ModifierKeys.Control) == 0) return; if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e); }
     void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; if (!e.Cancel) _gpuViewport.Dispose(); }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 

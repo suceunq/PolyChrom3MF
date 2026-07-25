@@ -23,7 +23,7 @@
       <MenuItem Header="_Aide"><MenuItem Header="Guide des fonctions" Click="HelpGuide_Click"/><MenuItem Header="Assistant de bienvenue" Click="Welcome_Click"/><MenuItem Header="Nouveautés de cette version" Click="WhatsNew_Click"/><MenuItem Header="Soutenir le projet via PayPal" Click="Donate_Click"/><MenuItem Header="Rechercher une mise à jour" Click="Update_Click"/><Separator/><MenuItem Header="À propos" Click="About_Click"/></MenuItem>
     </Menu>
 
-    <ToolBar DockPanel.Dock="Top" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
+    <ToolBar x:Name="MainToolbar" DockPanel.Dock="Top" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
       <Button Click="BeginnerMode_Click">Mode débutant</Button><Button Click="Import_Click" ToolTip="Ouvrir un fichier 3MF ou STL">Importer 3MF/STL</Button><Button Click="SaveProject_Click">Enregistrer projet</Button><Button Click="Export_Click">Exporter 3MF</Button><Button x:Name="OpenSlicerButton" Click="OpenPreferredSlicer_Click" IsEnabled="False">Ouvrir dans mon slicer</Button>
       <Separator/><Button Click="Undo_Click">Annuler</Button><Button Click="Redo_Click">Rétablir</Button><Separator/><Button Click="ImportPattern_Click" ToolTip="Projeter une image PNG ou JPG imprimable sur la figurine">Importer motif image</Button><Button Click="StyleGallery_Click">Galerie styles</Button><Button Click="ColorCount_Click">Nombre de couleurs</Button><Button Click="PrintAssistant_Click">Assistant impression</Button><Button Click="Regenerate_Click">Régénérer</Button><Button Click="Settings_Click">Paramètres</Button>
     </ToolBar>
@@ -32,10 +32,10 @@
       <TextBlock x:Name="StatusText" Text="Prêt — importez un fichier 3MF ou STL." Margin="8,0"/><Separator/><TextBlock x:Name="StatsText"/>
     </StatusBar>
 
-    <Grid Margin="12">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="280"/><ColumnDefinition Width="*"/><ColumnDefinition Width="370"/></Grid.ColumnDefinitions>
+    <Grid x:Name="WorkspaceGrid" Margin="12">
+      <Grid.ColumnDefinitions><ColumnDefinition x:Name="LeftColumn" Width="280"/><ColumnDefinition Width="*"/><ColumnDefinition x:Name="RightColumn" Width="370"/></Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,10,0">
+      <Border x:Name="LeftPanel" Grid.Column="0" Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,10,0">
         <DockPanel>
           <StackPanel DockPanel.Dock="Bottom">
             <Separator Margin="0,12"/><TextBlock Text="COULEUR DE L’ÉLÉMENT" FontWeight="Bold"/>
@@ -56,7 +56,7 @@
         </DockPanel>
       </Border>
 
-      <Border Grid.Column="1" Background="{DynamicResource ViewerBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,10,0">
+      <Border x:Name="ViewerPanel" Grid.Column="1" Background="{DynamicResource ViewerBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,10,0">
         <Grid>
           <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" MouseLeave="Viewer_MouseLeave" ToolTip="Rotation orbitale 360° possible sur le modèle, le plateau ou le fond · Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
           <ContentControl x:Name="GpuHost" Visibility="Collapsed"/>
@@ -113,7 +113,7 @@
         </Grid>
       </Border>
 
-      <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+      <ScrollViewer x:Name="RightPanel" Grid.Column="2" VerticalScrollBarVisibility="Auto">
         <StackPanel>
           <TextBlock x:Name="ProposalsTitle" Text="4 PROPOSITIONS · 4 COULEURS" FontWeight="Bold" FontSize="16" Margin="0,0,0,8"/>
           <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10">
@@ -202,6 +202,16 @@
           <TextBlock Text="La géométrie n’est jamais découpée : les motifs sont inscrits sur les triangles du maillage et exportés en vraies couleurs 3MF." TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" Margin="0,12,0,0" FontSize="12"/>
         </StackPanel>
       </ScrollViewer>
+      <Border x:Name="PatternEditorPanel"
+              Grid.Column="2"
+              Visibility="Collapsed"
+              Background="{DynamicResource PanelBackground}"
+              BorderBrush="{DynamicResource Accent}"
+              BorderThickness="1"
+              CornerRadius="8"
+              ClipToBounds="True">
+        <ContentControl x:Name="PatternEditorHost"/>
+      </Border>
     </Grid>
   </DockPanel>
 </Window>
