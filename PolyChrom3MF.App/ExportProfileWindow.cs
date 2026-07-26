@@ -369,6 +369,9 @@ public sealed class ExportProfileWindow : Window
             PrinterPreset = printer,
             ProcessPreset = process,
             NozzleDiameter = nozzle,
+            ExtruderCount = _printer.SelectedItem is InstalledSlicerPreset selectedPrinter
+                ? selectedPrinter.ExtruderCount
+                : 1,
             MaterialSlots = slots,
             FilamentColors = _filamentRows.Select(row => row.Color.Text).ToList(),
             FilamentMaterials = _filamentRows.Select(row => row.Material.SelectedItem?.ToString() ?? "PLA").ToList(),
