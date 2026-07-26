@@ -1,4 +1,4 @@
-# PolyChrom 3MF 2.0.2
+# PolyChrom 3MF 2.0.13
 
 Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un aperçu solide optimisé pour les très gros modèles.
 
@@ -37,7 +37,8 @@ Application Windows française et locale pour colorer, personnaliser et prépare
 - Sélection par îlot, angle, couleur, caméra, pièce, rectangle, lasso et régions sémantiques assistées.
 - Aperçu WPF solide avec cache, LOD automatique et maillage allégé pour les très gros modèles.
 - Recentrage automatique après import, coloration, texte, logo ou motif.
-- Assistant d’impression avec profils Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer.
+- Assistant d’export lisant les profils réellement installés de Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer : machine, processus, buse, nombre d’emplacements, matériaux, couleurs et filaments sont mémorisables dans plusieurs profils réutilisables.
+- Les métadonnées privées d’un ancien slicer sont remplacées à l’export afin qu’un projet Bambu, par exemple, puisse être rouvert avec le profil Snapmaker choisi sans conserver par erreur la X1 Carbon d’origine.
 - Galerie portable `.polystyle`, mode débutant et transformation directe des motifs dans la vue.
 
 ## Compilation

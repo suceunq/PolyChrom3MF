@@ -483,7 +483,7 @@ public partial class MainWindow : Window
     void PrintAssistant_Click(object sender, RoutedEventArgs e)
     {
         if (_selected is null) { MessageBox.Show("Importez d’abord un modèle.", "Assistant impression"); return; }
-        new PrintAssistantWindow(_selected, _settings, PreferredSlicerName(), _doc) { Owner = this }.ShowDialog();
+        SelectExportProfile(_selected, true);
     }
 
     async void ImportPattern_Click(object sender, RoutedEventArgs e)
@@ -1180,14 +1180,16 @@ public partial class MainWindow : Window
     async void Export_Click(object sender, RoutedEventArgs e)
     {
         if (_doc is null || _selected is null) { MessageBox.Show("Importez et sélectionnez une proposition avant l’export."); return; }
-        var dialog = new SaveFileDialog { Filter = "Fichiers 3MF (*.3mf)|*.3mf", FileName = Path.GetFileNameWithoutExtension(_doc.Path) + $"_{_colorCount}Couleurs.3mf", InitialDirectory = Directory.Exists(_settings.ExportFolder) ? _settings.ExportFolder : null, OverwritePrompt = true };
+        var exportProposal = FinalProposal(SelectedProposalIndex());
+        var exportProfile = SelectExportProfile(exportProposal, false);
+        if (exportProfile is null) return;
+        var dialog = new SaveFileDialog { Filter = "Fichiers 3MF (*.3mf)|*.3mf", FileName = ExportFileName(_doc.Path, exportProfile, _colorCount), InitialDirectory = Directory.Exists(_settings.ExportFolder) ? _settings.ExportFolder : null, OverwritePrompt = true };
         if (dialog.ShowDialog() != true) return;
         SetBusy(true, "Exportation et vérification du fichier 3MF…");
         try
         {
-            var exportProposal = FinalProposal(SelectedProposalIndex());
             var materials = MaterialsFor(exportProposal);
-            var report = await Task.Run(() => _service.ExportAndValidate(_doc, exportProposal, dialog.FileName, _settings.VerifyAfterExport, materials));
+            var report = await Task.Run(() => _service.ExportAndValidate(_doc, exportProposal, dialog.FileName, _settings.VerifyAfterExport, materials, exportProfile));
             StatusText.Text = _settings.VerifyAfterExport ? "Export terminé et vérifié avec succès." : "Export terminé avec succès.";
             _lastSlicerFile = dialog.FileName; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             var slicerName = PreferredSlicerName();
@@ -1212,17 +1214,17 @@ public partial class MainWindow : Window
     async void OpenPreferredSlicer_Click(object sender, RoutedEventArgs e)
     {
         if (_doc is null || _selected is null) { MessageBox.Show("Importez et sélectionnez une proposition avant d’ouvrir le slicer."); return; }
+        var proposal = FinalProposal(SelectedProposalIndex());
+        var exportProfile = SelectExportProfile(proposal, false);
+        if (exportProfile is null) return;
         SetBusy(true, $"Préparation du modèle coloré pour {PreferredSlicerName()}…");
         try
         {
             var previewFolder = Path.Combine(Path.GetTempPath(), "PolyChrom3MF", "SlicerPreview");
             Directory.CreateDirectory(previewFolder);
-            var safeName = string.Concat(Path.GetFileNameWithoutExtension(_doc.Path).Select(character =>
-                Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
-            var path = Path.Combine(previewFolder, $"{safeName}_{_colorCount}Couleurs.3mf");
-            var proposal = FinalProposal(SelectedProposalIndex());
+            var path = Path.Combine(previewFolder, ExportFileName(_doc.Path, exportProfile, _colorCount));
             var materials = MaterialsFor(proposal);
-            await Task.Run(() => _service.ExportAndValidate(_doc, proposal, path, true, materials));
+            await Task.Run(() => _service.ExportAndValidate(_doc, proposal, path, true, materials, exportProfile));
             _lastSlicerFile = path;
             OpenInSlicer(path);
         }
@@ -1232,6 +1234,42 @@ public partial class MainWindow : Window
             StatusText.Text = "Préparation pour le slicer impossible.";
         }
         finally { SetBusy(false); }
+    }
+
+    static string ExportFileName(string sourcePath, ExportProfileSettings profile, int colorCount)
+    {
+        var source = Path.GetFileNameWithoutExtension(sourcePath);
+        var markers = new[] { "_AMS", "+AMS", "_Bambu", "+Bambu", "_BBL", "+BBL", "_X1C", "+X1C" };
+        var markerIndex = markers
+            .Select(marker => source.IndexOf(marker, StringComparison.OrdinalIgnoreCase))
+            .Where(index => index > 0)
+            .DefaultIfEmpty(source.Length)
+            .Min();
+        source = source[..markerIndex].Trim(' ', '_', '-', '+');
+        if (source.Length == 0) source = "Modele";
+        var printer = string.IsNullOrWhiteSpace(profile.PrinterPreset) ? profile.SlicerName : profile.PrinterPreset;
+        string Safe(string value) => string.Concat(value
+            .Take(80)
+            .Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+        return $"{Safe(source)}_{Safe(printer)}_{colorCount}Couleurs.3mf";
+    }
+
+    ExportProfileSettings? SelectExportProfile(ColorProposal proposal, bool force)
+    {
+        var existing = _settings.ExportProfiles.FirstOrDefault(profile =>
+            profile.Name.Equals(_settings.DefaultExportProfile, StringComparison.OrdinalIgnoreCase));
+        if (!force && !_settings.AlwaysConfirmExportProfile && existing is not null && File.Exists(existing.SlicerPath))
+        {
+            _settings.PreferredSlicer = existing.SlicerPath;
+            return existing;
+        }
+        var detected = _slicerDetection.Detect([_settings.PreferredSlicer]);
+        var dialog = new ExportProfileWindow(_settings, proposal, detected) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Result is null) return null;
+        _settingsService.Save(_settings);
+        EnsurePreferredSlicer();
+        UpdateSlicerButton();
+        return dialog.Result;
     }
 
     void EnsurePreferredSlicer()

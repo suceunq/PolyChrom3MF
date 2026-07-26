@@ -217,6 +217,66 @@ public class ThreeMfTests
         Assert.Equal(["PLA", "PETG"], settings.RootElement.GetProperty("filament_type").EnumerateArray().Select(value => value.GetString()));
         Assert.Equal(["Generic PLA", "Generic PETG"], settings.RootElement.GetProperty("filament_settings_id").EnumerateArray().Select(value => value.GetString()));
     }
+    [Fact] public void Export_snapmaker_remplace_entierement_un_profil_bambu_source()
+    {
+        var source = Sample(2);
+        using (var zip = ZipFile.Open(source, ZipArchiveMode.Update))
+        using (var writer = new StreamWriter(zip.CreateEntry("Metadata/project_settings.config").Open()))
+            writer.Write("""{"printer_settings_id":"Bambu Lab X1 Carbon 0.4 nozzle","printer_model":"Bambu Lab X1 Carbon","print_settings_id":"0.20mm Standard @BBL X1C","filament_settings_id":["Bambu PLA","Bambu PETG"],"filament_type":["PLA","PETG"]}""");
+        var service = new ThreeMfService();
+        var document = service.Read(source);
+        var proposal = new PaletteService().Create(document, colorCount: 2)[0];
+        var profile = new ExportProfileSettings
+        {
+            Name = "U1",
+            SlicerName = "Snapmaker Orca",
+            PrinterPreset = "Snapmaker U1 (0.4 nozzle)",
+            ProcessPreset = "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
+            NozzleDiameter = .4,
+            MaterialSlots = 4,
+            FilamentMaterials = ["PLA", "PETG"],
+            FilamentPresets = ["Generic PLA @System", "Generic PETG @System"]
+        };
+        var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf");
+        service.Export(document, proposal, output, profile.FilamentMaterials, profile);
+        using var result = ZipFile.OpenRead(output);
+        using var reader = new StreamReader(result.GetEntry("Metadata/project_settings.config")!.Open());
+        var json = reader.ReadToEnd();
+        using var settings = JsonDocument.Parse(json);
+        var root = settings.RootElement;
+        Assert.Equal("Snapmaker U1 (0.4 nozzle)", root.GetProperty("printer_settings_id").GetString());
+        Assert.Equal("Snapmaker U1", root.GetProperty("printer_model").GetString());
+        Assert.Equal("0.20 Standard @Snapmaker U1 (0.4 nozzle)", root.GetProperty("print_settings_id").GetString());
+        Assert.Equal(["Generic PLA", "Generic PETG"], root.GetProperty("filament_settings_id").EnumerateArray().Take(2).Select(value => value.GetString()));
+        Assert.Equal(4, root.GetProperty("filament_settings_id").GetArrayLength());
+        Assert.Equal(4, root.GetProperty("nozzle_diameter").GetArrayLength());
+        Assert.DoesNotContain("Bambu Lab X1 Carbon", json);
+    }
+    [Fact] public void Export_prusa_ajoute_sa_configuration_native()
+    {
+        var service = new ThreeMfService();
+        var document = service.Read(Sample(2));
+        var proposal = new PaletteService().Create(document, colorCount: 2)[0];
+        var profile = new ExportProfileSettings
+        {
+            Name = "Prusa",
+            SlicerName = "PrusaSlicer",
+            PrinterPreset = "Original Prusa MK4S 0.4 nozzle",
+            ProcessPreset = "0.20mm SPEED",
+            NozzleDiameter = .4,
+            FilamentMaterials = ["PLA", "PETG"],
+            FilamentPresets = ["Generic PLA", "Generic PETG"]
+        };
+        var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf");
+        service.Export(document, proposal, output, profile.FilamentMaterials, profile);
+        using var result = ZipFile.OpenRead(output);
+        var entry = result.GetEntry("Metadata/Slic3r_PE.config");
+        Assert.NotNull(entry);
+        using var reader = new StreamReader(entry!.Open());
+        var text = reader.ReadToEnd();
+        Assert.Contains("printer_settings_id = Original Prusa MK4S 0.4 nozzle", text);
+        Assert.Contains("filament_type = PLA;PETG", text);
+    }
     [Theory]
     [InlineData(.001)]
     [InlineData(.999)]

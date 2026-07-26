@@ -88,9 +88,10 @@ public sealed class ThreeMfService
         }
     }
 
-    public void Export(ModelDocument document, ColorProposal proposal, string destination, IReadOnlyList<string>? filamentMaterials = null) => ExportAndValidate(document, proposal, destination, true, filamentMaterials);
+    public void Export(ModelDocument document, ColorProposal proposal, string destination, IReadOnlyList<string>? filamentMaterials = null, ExportProfileSettings? exportProfile = null) =>
+        ExportAndValidate(document, proposal, destination, true, filamentMaterials, exportProfile);
 
-    public string ExportAndValidate(ModelDocument document, ColorProposal proposal, string destination, bool verify, IReadOnlyList<string>? filamentMaterials = null)
+    public string ExportAndValidate(ModelDocument document, ColorProposal proposal, string destination, bool verify, IReadOnlyList<string>? filamentMaterials = null, ExportProfileSettings? exportProfile = null)
     {
         if (proposal.Colors.Count is < 2 or > 32) throw new InvalidDataException("Une proposition doit contenir entre deux et trente-deux couleurs.");
         var fullDestination = Path.GetFullPath(destination);
@@ -164,7 +165,7 @@ public sealed class ThreeMfService
                 using var writer = XmlWriter.Create(output, SafeWriterSettings());
                 xml.Save(writer);
             }
-            WriteSlicerProjectMetadata(zip, document, proposal, filamentMaterials);
+            WriteSlicerProjectMetadata(zip, document, proposal, filamentMaterials, exportProfile);
         }
 
         var report = $"{document.Objects.Count} objets · {document.TriangleCount:N0} triangles · {proposal.Colors.Count} couleurs";
@@ -177,7 +178,10 @@ public sealed class ThreeMfService
                 throw new InvalidDataException("La vérification après export a échoué : dimensions différentes.");
             if (reopened.ExistingColorCount < proposal.Colors.Count)
                 throw new InvalidDataException("La vérification après export a échoué : matériaux absents.");
+            ValidateExportProfile(workingDestination, proposal, exportProfile);
             report = $"{reopened.Objects.Count} objets · {reopened.TriangleCount:N0} triangles · dimensions identiques · {proposal.Colors.Count} couleurs";
+            if (exportProfile is not null)
+                report += $" · profil {exportProfile.PrinterPreset} vérifié";
         }
         File.Move(workingDestination, fullDestination, true);
         return report;
@@ -287,9 +291,10 @@ public sealed class ThreeMfService
             if (normalized.StartsWith('/') || normalized.Split('/').Any(segment => segment == "..")) continue;
             var extension = Path.GetExtension(normalized);
             var isSafeAsset = new[] { ".png", ".jpg", ".jpeg", ".txt" }.Contains(extension, StringComparer.OrdinalIgnoreCase);
-            var isSlicerSettings = normalized.Equals("Metadata/project_settings.config", StringComparison.OrdinalIgnoreCase)
-                || normalized.Equals("Metadata/slice_info.config", StringComparison.OrdinalIgnoreCase);
-            if (!isSafeAsset && !isSlicerSettings) continue;
+            // Never inherit printer/process metadata from the source package.
+            // A Bambu project exported for Snapmaker must not retain the X1C
+            // machine, process, AMS or filament presets.
+            if (!isSafeAsset) continue;
             if (destination.Entries.Any(existing => existing.FullName.Equals(normalized, StringComparison.OrdinalIgnoreCase))) continue;
             var copy = destination.CreateEntry(normalized, CompressionLevel.Optimal);
             using var input = entry.Open();
@@ -342,52 +347,56 @@ public sealed class ThreeMfService
         else { anchor.AddBeforeSelf(version); anchor.AddBeforeSelf(painting); }
     }
 
-    static void WriteSlicerProjectMetadata(ZipArchive zip, ModelDocument document, ColorProposal proposal, IReadOnlyList<string>? filamentMaterials)
+    static void WriteSlicerProjectMetadata(ZipArchive zip, ModelDocument document, ColorProposal proposal, IReadOnlyList<string>? filamentMaterials, ExportProfileSettings? exportProfile)
     {
         ReplaceXmlEntry(zip, "Metadata/model_settings.config", BuildSlicerModelSettings(document));
 
         var projectEntry = zip.Entries.FirstOrDefault(entry =>
             entry.FullName.Equals("Metadata/project_settings.config", StringComparison.OrdinalIgnoreCase));
-        JsonObject settings;
-        if (projectEntry is not null)
-        {
-            try
-            {
-                using var reader = new StreamReader(projectEntry.Open());
-                settings = JsonNode.Parse(reader.ReadToEnd()) as JsonObject ?? new JsonObject();
-            }
-            catch (JsonException)
-            {
-                settings = new JsonObject();
-            }
-            projectEntry.Delete();
-        }
-        else settings = new JsonObject();
+        projectEntry?.Delete();
+        var catalog = new SlicerProfileCatalogService();
+        var settings = exportProfile is null
+            ? new JsonObject()
+            : catalog.BuildProjectSettings(exportProfile, proposal.Colors);
 
         var colors = new JsonArray(proposal.Colors.Select(color => JsonValue.Create(color.Hex.ToUpperInvariant())).ToArray());
-        settings["filament_colour"] = colors;
-        settings["default_filament_colour"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("")).ToArray());
-        settings["filament_ids"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("GFSG00_01")).ToArray());
+        if (exportProfile is null)
+        {
+            settings["filament_colour"] = colors;
+            settings["default_filament_colour"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("")).ToArray());
+            settings["filament_ids"] = new JsonArray(proposal.Colors.Select(_ => JsonValue.Create("GFSG00_01")).ToArray());
+        }
         var materials = Enumerable.Range(0, proposal.Colors.Count)
-            .Select(index => string.Equals(filamentMaterials?.ElementAtOrDefault(index), "PETG", StringComparison.OrdinalIgnoreCase) ? "PETG" : "PLA")
+            .Select(index => ExportProfileSettings.MaterialName(
+                exportProfile?.FilamentMaterials.ElementAtOrDefault(index) ?? filamentMaterials?.ElementAtOrDefault(index)))
             .ToArray();
-        settings["filament_type"] = new JsonArray(materials.Select(material => JsonValue.Create(material)).ToArray());
-        settings["filament_settings_id"] = new JsonArray(materials.Select(material => JsonValue.Create($"Generic {material}")).ToArray());
-        settings["nozzle_diameter"] ??= new JsonArray(JsonValue.Create("0.4"));
-        NormalizePortableSlicerSettings(settings, proposal.Colors.Count);
+        if (exportProfile is null)
+        {
+            settings["filament_type"] = new JsonArray(materials.Select(material => JsonValue.Create(material)).ToArray());
+            settings["filament_settings_id"] = new JsonArray(materials.Select(material => JsonValue.Create($"Generic {material}")).ToArray());
+        }
+        settings["nozzle_diameter"] ??= new JsonArray(JsonValue.Create(
+            (exportProfile?.NozzleDiameter ?? .4).ToString("0.0##", CultureInfo.InvariantCulture)));
+        NormalizePortableSlicerSettings(settings, Math.Max(proposal.Colors.Count, exportProfile?.MaterialSlots ?? proposal.Colors.Count));
 
         var replacement = zip.CreateEntry("Metadata/project_settings.config", CompressionLevel.Optimal);
         using (var output = replacement.Open())
         using (var writer = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = true }))
             settings.WriteTo(writer);
 
-        if (!zip.Entries.Any(entry => entry.FullName.Equals("Metadata/slice_info.config", StringComparison.OrdinalIgnoreCase)))
+        ReplaceXmlEntry(zip, "Metadata/slice_info.config", new XDocument(
+            new XElement("config",
+                new XElement("header",
+                    new XElement("header_item", new XAttribute("key", "X-BBL-Client-Type"), new XAttribute("value", "slicer")),
+                    new XElement("header_item", new XAttribute("key", "X-BBL-Client-Version"), new XAttribute("value", ""))))));
+
+        zip.Entries.FirstOrDefault(entry =>
+            entry.FullName.Equals("Metadata/Slic3r_PE.config", StringComparison.OrdinalIgnoreCase))?.Delete();
+        if (exportProfile?.Family == SlicerFamily.PrusaSlicer)
         {
-            ReplaceXmlEntry(zip, "Metadata/slice_info.config", new XDocument(
-                new XElement("config",
-                    new XElement("header",
-                        new XElement("header_item", new XAttribute("key", "X-BBL-Client-Type"), new XAttribute("value", "slicer")),
-                        new XElement("header_item", new XAttribute("key", "X-BBL-Client-Version"), new XAttribute("value", ""))))));
+            var prusa = zip.CreateEntry("Metadata/Slic3r_PE.config", CompressionLevel.Optimal);
+            using var writer = new StreamWriter(prusa.Open(), new System.Text.UTF8Encoding(false));
+            writer.Write(catalog.BuildPrusaConfiguration(exportProfile, proposal.Colors));
         }
     }
 
@@ -417,6 +426,39 @@ public sealed class ThreeMfService
             Enumerable.Range(0, count).Select(_ => JsonValue.Create("Normal Lift")).ToArray());
         settings["z_hop"] = new JsonArray(
             Enumerable.Range(0, count).Select(_ => JsonValue.Create("0.4")).ToArray());
+    }
+
+    static void ValidateExportProfile(string path, ColorProposal proposal, ExportProfileSettings? profile)
+    {
+        using var zip = ZipFile.OpenRead(path);
+        ValidateArchive(zip);
+        var project = zip.GetEntry("Metadata/project_settings.config")
+            ?? throw new InvalidDataException("La configuration du slicer est absente du 3MF.");
+        if (project.Length is <= 2 or > 32 * 1024 * 1024)
+            throw new InvalidDataException("La configuration du slicer est invalide.");
+        JsonObject settings;
+        using (var stream = project.Open())
+            settings = JsonNode.Parse(stream) as JsonObject
+                ?? throw new InvalidDataException("La configuration du slicer est illisible.");
+        foreach (var key in new[] { "filament_colour", "filament_type", "filament_settings_id", "nozzle_diameter" })
+            if (settings[key] is not JsonArray values || values.Count == 0 || values.Any(value => value is null))
+                throw new InvalidDataException($"La métadonnée de slicer « {key} » est absente ou incomplète.");
+        if ((settings["filament_colour"] as JsonArray)!.Count < proposal.Colors.Count ||
+            (settings["filament_type"] as JsonArray)!.Count < proposal.Colors.Count)
+            throw new InvalidDataException("Le profil exporté ne décrit pas tous les filaments du modèle.");
+        if (profile is null) return;
+        if (!string.Equals(settings["printer_settings_id"]?.ToString(), profile.PrinterPreset, StringComparison.Ordinal))
+            throw new InvalidDataException("Le profil machine sélectionné n’a pas été écrit dans le 3MF.");
+        if (!string.Equals(settings["print_settings_id"]?.ToString(), profile.ProcessPreset, StringComparison.Ordinal))
+            throw new InvalidDataException("Le profil de processus sélectionné n’a pas été écrit dans le 3MF.");
+        var expectedNozzle = profile.NozzleDiameter.ToString("0.0##", CultureInfo.InvariantCulture);
+        if (!(settings["nozzle_diameter"] as JsonArray)!.All(value => value?.ToString() == expectedNozzle))
+            throw new InvalidDataException("Le diamètre de buse exporté ne correspond pas au profil choisi.");
+        if ((settings["filament_colour"] as JsonArray)!.Count < profile.MaterialSlots ||
+            (settings["filament_settings_id"] as JsonArray)!.Count < profile.MaterialSlots)
+            throw new InvalidDataException("Le nombre d’emplacements de filament exporté est incomplet.");
+        if (profile.Family == SlicerFamily.PrusaSlicer && zip.GetEntry("Metadata/Slic3r_PE.config") is null)
+            throw new InvalidDataException("La configuration native PrusaSlicer est absente.");
     }
 
     static XDocument BuildSlicerModelSettings(ModelDocument document)
