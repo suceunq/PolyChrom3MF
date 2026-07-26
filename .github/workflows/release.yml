@@ -32,8 +32,20 @@ jobs:
       - name: Construire l'installateur
         run: iscc /DAppPublishDir=publish/app installer.iss
 
+      - name: Préparer les notes de version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          $source = "RELEASE_NOTES_$version.md"
+          if (-not (Test-Path -LiteralPath $source)) {
+            throw "Notes de version absentes : $source"
+          }
+          Copy-Item -LiteralPath $source -Destination release-notes.md
+
       - name: Créer la Release GitHub
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
           files: LIVRAISON_FINALE/Installateur/PolyChrom3MF_Setup_x64.exe
