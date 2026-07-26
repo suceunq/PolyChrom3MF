@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.12
+
+- Version de mise à jour publique de l’atelier motif intégré et des optimisations de fluidité.
+- Numéro distinct de la préversion locale 2.0.11 afin de garantir la détection automatique de la mise à jour.
+
 ## 2.0.11
 
 - Nouvel atelier de placement intégré à la fenêtre principale pour les motifs PNG/JPEG.
