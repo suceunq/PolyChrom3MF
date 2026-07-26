@@ -233,6 +233,7 @@ public class ThreeMfTests
             PrinterPreset = "Snapmaker U1 (0.4 nozzle)",
             ProcessPreset = "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
             NozzleDiameter = .4,
+            ExtruderCount = 4,
             MaterialSlots = 4,
             FilamentMaterials = ["PLA", "PETG"],
             FilamentPresets = ["Generic PLA @System", "Generic PETG @System"]

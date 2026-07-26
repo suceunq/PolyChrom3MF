@@ -454,6 +454,8 @@ public sealed class ThreeMfService
         var expectedNozzle = profile.NozzleDiameter.ToString("0.0##", CultureInfo.InvariantCulture);
         if (!(settings["nozzle_diameter"] as JsonArray)!.All(value => value?.ToString() == expectedNozzle))
             throw new InvalidDataException("Le diamètre de buse exporté ne correspond pas au profil choisi.");
+        if ((settings["nozzle_diameter"] as JsonArray)!.Count < profile.ExtruderCount)
+            throw new InvalidDataException("Le nombre d’extrudeurs physiques exporté est incomplet.");
         if ((settings["filament_colour"] as JsonArray)!.Count < profile.MaterialSlots ||
             (settings["filament_settings_id"] as JsonArray)!.Count < profile.MaterialSlots)
             throw new InvalidDataException("Le nombre d’emplacements de filament exporté est incomplet.");

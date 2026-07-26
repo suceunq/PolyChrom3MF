@@ -72,7 +72,7 @@ public sealed class SlicerProfileCatalogService
         output["printer_variant"] = profile.NozzleDiameter.ToString("0.0##", CultureInfo.InvariantCulture);
         output["print_settings_id"] = processName;
         output["default_print_profile"] = processName;
-        var nozzleCount = Math.Max(1, ArrayLength(machine["nozzle_diameter"]));
+        var nozzleCount = Math.Max(profile.ExtruderCount, ArrayLength(machine["nozzle_diameter"]));
         output["nozzle_diameter"] = Repeat(profile.NozzleDiameter.ToString("0.0##", CultureInfo.InvariantCulture), nozzleCount);
         var slotColors = Enumerable.Range(0, slotCount)
             .Select(index => index < colors.Count

@@ -19,6 +19,7 @@ public sealed class ExportProfileSettings
     public string PrinterPreset { get; set; } = "";
     public string ProcessPreset { get; set; } = "";
     public double NozzleDiameter { get; set; } = .4;
+    public int ExtruderCount { get; set; } = 1;
     public int MaterialSlots { get; set; } = 4;
     public List<string> FilamentPresets { get; set; } = [];
     public List<string> FilamentMaterials { get; set; } = [];
@@ -36,6 +37,7 @@ public sealed class ExportProfileSettings
         value.ProcessPreset = Safe(value.ProcessPreset, 160);
         if (!double.IsFinite(value.NozzleDiameter)) value.NozzleDiameter = .4;
         value.NozzleDiameter = Math.Clamp(value.NozzleDiameter, .1, 2);
+        value.ExtruderCount = Math.Clamp(value.ExtruderCount, 1, 64);
         value.MaterialSlots = Math.Clamp(value.MaterialSlots, 1, 64);
         value.FilamentPresets = (value.FilamentPresets ?? []).Select(item => Safe(item, 160)).Take(32).ToList();
         value.FilamentMaterials = (value.FilamentMaterials ?? [])
