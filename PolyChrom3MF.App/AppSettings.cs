@@ -20,6 +20,9 @@ public sealed class AppSettings
     public bool UseGpuRenderer { get; set; }
     public List<string> FilamentColors { get; set; } = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
     public List<string> FilamentMaterials { get; set; } = ["PLA", "PLA", "PLA", "PLA"];
+    public List<ExportProfileSettings> ExportProfiles { get; set; } = [];
+    public string DefaultExportProfile { get; set; } = "";
+    public bool AlwaysConfirmExportProfile { get; set; } = true;
     public string LastSeenVersion { get; set; } = "";
     public string LastReleaseNotes { get; set; } = "";
     public string PendingUpdateVersion { get; set; } = "";
@@ -78,6 +81,16 @@ public sealed class SettingsService
             .Select(material => string.Equals(material, "PETG", StringComparison.OrdinalIgnoreCase) ? "PETG" : "PLA")
             .Take(value.FilamentColors.Count).ToList();
         while (value.FilamentMaterials.Count < value.FilamentColors.Count) value.FilamentMaterials.Add("PLA");
+        value.ExportProfiles = (value.ExportProfiles ?? [])
+            .Where(profile => profile is not null)
+            .Take(20)
+            .Select(ExportProfileSettings.Normalize)
+            .GroupBy(profile => profile.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Last())
+            .ToList();
+        value.DefaultExportProfile = SafeText(value.DefaultExportProfile, 100);
+        if (value.ExportProfiles.All(profile => !profile.Name.Equals(value.DefaultExportProfile, StringComparison.OrdinalIgnoreCase)))
+            value.DefaultExportProfile = value.ExportProfiles.FirstOrDefault()?.Name ?? "";
         return value;
     }
 

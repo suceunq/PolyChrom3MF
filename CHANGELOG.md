@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.13
+
+- Nouvel assistant d’export basé sur les profils réellement installés de Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer.
+- Export de l’imprimante, du processus, de la buse, des emplacements, des profils de filament, des matériaux et des couleurs.
+- Suppression complète des anciennes métadonnées machine du fichier source pour éviter qu’un projet Snapmaker reste identifié comme une Bambu Lab X1 Carbon.
+- Profils d’export mémorisables, réutilisables et configurables comme valeur par défaut.
+- Recherche instantanée des filaments avec prise en charge des espaces, tri des profils Generic et suppression des doublons.
+- Nom de fichier transmis au slicer nettoyé et complété avec l’imprimante sélectionnée.
+- Validation structurelle des métadonnées générées et configuration native supplémentaire pour PrusaSlicer.
+
 ## 2.0.12
 
 - Version de mise à jour publique de l’atelier motif intégré et des optimisations de fluidité.

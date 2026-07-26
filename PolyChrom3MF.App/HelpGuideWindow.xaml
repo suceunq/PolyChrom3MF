@@ -52,6 +52,7 @@
       <TabItem Header="Slicers et mises à jour"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">
         <TextBlock Text="Continuer vers l’impression" FontSize="20" FontWeight="Bold"/>
         <TextBlock Text="PolyChrom détecte les slicers installés, notamment PrusaSlicer, OrcaSlicer, Bambu Studio, Cura et Snapmaker Orca. Choisissez votre slicer préféré dans Paramètres, puis ouvrez-y directement le modèle exporté." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+        <TextBlock Text="Avant l’export, l’assistant de profil lit les profils réellement installés. Confirmez le slicer, l’imprimante, le processus, la buse, les emplacements et le matériau de chaque filament. Le profil peut être mémorisé comme valeur par défaut ; PolyChrom remplace alors intégralement les anciennes métadonnées machine du fichier source afin qu’un projet Bambu ne soit jamais rouvert par erreur avec une X1 Carbon lorsqu’il est destiné à une Snapmaker ou à une Prusa." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
         <TextBlock Text="La recherche de mise à jour vérifie les versions publiées, télécharge l’installateur, contrôle son empreinte SHA-256 et redémarre l’application. Après une mise à jour, la fenêtre Nouveautés résume les ajouts et corrections." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
       </StackPanel></ScrollViewer></TabItem>
     </TabControl>
