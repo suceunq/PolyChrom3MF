@@ -66,6 +66,7 @@ public sealed class PatternGeometryService
         };
         var derivedBases = new List<ColorProposal>(bases.Count);
         var proposals = new List<ColorProposal>(bases.Count);
+        var reliefTriangles = new Dictionary<int, HashSet<int>>();
         for (var proposalIndex = 0; proposalIndex < bases.Count; proposalIndex++)
         {
             var proposal = Clone(bases[proposalIndex]);
@@ -82,10 +83,55 @@ public sealed class PatternGeometryService
             }
             derivedBases.Add(Clone(proposal));
             if (targetProposals is null || targetProposals.Contains(proposalIndex))
-                _patterns.Apply(derived, proposal, settings, modes[Math.Min(proposalIndex, modes.Count - 1)], cancellationToken);
+            {
+                var applied = _patterns.Apply(derived, proposal, settings, modes[Math.Min(proposalIndex, modes.Count - 1)], cancellationToken, collectRefinement: Math.Abs(settings.ReliefDepth) > .0001);
+                foreach (var pair in applied.RefinementTriangles)
+                {
+                    if (!reliefTriangles.TryGetValue(pair.Key, out var selected)) reliefTriangles[pair.Key] = selected = [];
+                    selected.UnionWith(pair.Value);
+                }
+            }
             proposals.Add(proposal);
         }
+        if (Math.Abs(settings.ReliefDepth) > .0001 && reliefTriangles.Count > 0)
+            derived = DisplaceRelief(derived, reliefTriangles, settings.ReliefDepth);
         return new PatternGeometryResult(derived, derivedBases, proposals, checked((int)Math.Min(int.MaxValue, triangleCount - source.TriangleCount)), levels);
+    }
+
+    static ModelDocument DisplaceRelief(ModelDocument document, IReadOnlyDictionary<int, HashSet<int>> selectedByObject, double depth)
+    {
+        var objects = document.Objects.Select(obj =>
+        {
+            if (!selectedByObject.TryGetValue(obj.Index, out var selected) || selected.Count == 0) return obj;
+            var normals = new (double X, double Y, double Z)[obj.Vertices.Count];
+            foreach (var triangleIndex in selected)
+            {
+                if ((uint)triangleIndex >= (uint)obj.Triangles.Count) continue;
+                var triangle = obj.Triangles[triangleIndex];
+                var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
+                var ux = b.X - a.X; var uy = b.Y - a.Y; var uz = b.Z - a.Z;
+                var vx = c.X - a.X; var vy = c.Y - a.Y; var vz = c.Z - a.Z;
+                var nx = uy * vz - uz * vy; var ny = uz * vx - ux * vz; var nz = ux * vy - uy * vx;
+                foreach (var vertex in new[] { triangle.A, triangle.B, triangle.C })
+                    normals[vertex] = (normals[vertex].X + nx, normals[vertex].Y + ny, normals[vertex].Z + nz);
+            }
+            var vertices = obj.Vertices.Select((vertex, index) =>
+            {
+                var normal = normals[index];
+                var length = Math.Sqrt(normal.X * normal.X + normal.Y * normal.Y + normal.Z * normal.Z);
+                return length <= 1e-12 ? vertex : new Vertex(vertex.X + normal.X / length * depth, vertex.Y + normal.Y / length * depth, vertex.Z + normal.Z / length * depth);
+            }).ToList();
+            return obj with { Vertices = vertices };
+        }).ToList();
+        var vertices = objects.SelectMany(obj => obj.Vertices).ToArray();
+        return document with
+        {
+            Objects = objects,
+            SizeX = vertices.Max(vertex => vertex.X) - vertices.Min(vertex => vertex.X),
+            SizeY = vertices.Max(vertex => vertex.Y) - vertices.Min(vertex => vertex.Y),
+            SizeZ = vertices.Max(vertex => vertex.Z) - vertices.Min(vertex => vertex.Z),
+            IsDerived = true
+        };
     }
 
     static ColorProposal Clone(ColorProposal proposal) => new(
