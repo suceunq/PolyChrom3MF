@@ -1,41 +1,71 @@
 <Window x:Class="PolyChrom3MF.App.ImageImportOptionsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Préparer l’image"
-        Width="620"
-        Height="610"
+        Title="Détourer le logo ou le motif"
+        Width="1040" Height="760" MinWidth="820" MinHeight="620"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
-        Background="#20242B"
-        Foreground="White">
-  <Grid Margin="24">
+        Background="#20242B" Foreground="White">
+  <Grid Margin="20">
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="250"/>
-      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
-    <TextBlock Text="PRÉPARER LE MOTIF" FontSize="22" FontWeight="Bold"/>
-    <Border Grid.Row="1" Margin="0,14,0,14" Background="#171B22" BorderBrush="#566277" BorderThickness="1" CornerRadius="8" Padding="8">
-      <Image x:Name="Preview" Stretch="Uniform"/>
-    </Border>
-    <CheckBox Grid.Row="2" x:Name="RemoveBackgroundCheck" Content="Supprimer automatiquement le fond" FontWeight="SemiBold" Checked="OptionChanged" Unchecked="OptionChanged"/>
-      <TextBlock Grid.Row="3" Margin="24,5,0,12" TextWrapping="Wrap" Foreground="#C2CAD6"
-               Text="Traitement local sans plafond arbitraire de taille : le logiciel retire le fond relié aux bords de l’image. Les sujets bien détachés sur un fond uni donnent les meilleurs résultats."/>
-    <StackPanel Grid.Row="4" x:Name="TolerancePanel">
-      <DockPanel>
-        <TextBlock Text="Tolérance de détection" FontWeight="SemiBold"/>
-        <TextBlock x:Name="ToleranceValue" DockPanel.Dock="Right" Text="42" HorizontalAlignment="Right"/>
-      </DockPanel>
-      <Slider x:Name="ToleranceSlider" Minimum="5" Maximum="120" Value="42" TickFrequency="5" ValueChanged="ToleranceChanged"/>
-      <TextBlock Text="Faible : conserve davantage le sujet · Forte : retire davantage de nuances du fond" Foreground="#98A5B8" FontSize="12" TextWrapping="Wrap"/>
+    <StackPanel>
+      <TextBlock Text="DÉTOURAGE DU LOGO" FontSize="23" FontWeight="Bold"/>
+      <TextBlock Margin="0,5,0,14" Foreground="#C2CAD6" TextWrapping="Wrap"
+                 Text="Retirez le fond automatiquement ou corrigez le masque à la main. Le damier représente la transparence qui conservera la couleur du modèle."/>
     </StackPanel>
-    <Grid Grid.Row="5" Margin="0,18,0,0">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
-      <Button Grid.Column="0" Content="Continuer" Click="Continue_Click" IsDefault="True" MinHeight="42" FontWeight="Bold" Background="#187FD1" BorderBrush="#58AFFF"/>
-      <Button Grid.Column="2" Content="Annuler" IsCancel="True" MinHeight="42"/>
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="250"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Text="Méthode de détourage" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <Button Content="Suppression automatique du fond" Click="Auto_Click" MinHeight="42"/>
+          <Button Content="Supprimer la couleur dominante" Click="Dominant_Click" MinHeight="42"/>
+          <Button Content="Réinitialiser l’image" Click="Reset_Click"/>
+          <TextBlock Text="Tolérance" FontWeight="SemiBold" Margin="2,18,2,4"/>
+          <DockPanel>
+            <TextBlock x:Name="ToleranceValue" DockPanel.Dock="Right" Text="42"/>
+            <Slider x:Name="ToleranceSlider" Minimum="1" Maximum="160" Value="42" TickFrequency="5" ValueChanged="ToleranceChanged"/>
+          </DockPanel>
+          <TextBlock Text="Une valeur élevée retire davantage de nuances proches du fond." Foreground="#98A5B8" FontSize="12" TextWrapping="Wrap"/>
+          <Separator Margin="0,16"/>
+          <TextBlock Text="Correction manuelle" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <RadioButton x:Name="EraseTool" Content="Gomme — supprimer" IsChecked="True" Margin="4" Foreground="White"/>
+          <RadioButton x:Name="RestoreTool" Content="Restauration — conserver" Margin="4" Foreground="White"/>
+          <TextBlock Text="Taille du pinceau" FontWeight="SemiBold" Margin="2,12,2,4"/>
+          <DockPanel>
+            <TextBlock x:Name="BrushValue" DockPanel.Dock="Right" Text="32 px"/>
+            <Slider x:Name="BrushSlider" Minimum="3" Maximum="180" Value="32" ValueChanged="BrushChanged"/>
+          </DockPanel>
+          <TextBlock Text="Maintenez le clic gauche et dessinez directement sur l’image." Foreground="#98A5B8" FontSize="12" TextWrapping="Wrap"/>
+        </StackPanel>
+      </ScrollViewer>
+      <Border Grid.Column="2" Background="#171B22" BorderBrush="#566277" BorderThickness="1" CornerRadius="8" Padding="10">
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
+          <Border x:Name="Checker" MouseLeftButtonDown="Preview_MouseLeftButtonDown"
+                  MouseLeftButtonUp="Preview_MouseLeftButtonUp" MouseMove="Preview_MouseMove">
+            <Border.Background>
+              <DrawingBrush TileMode="Tile" Viewport="0,0,24,24" ViewportUnits="Absolute">
+                <DrawingBrush.Drawing>
+                  <DrawingGroup>
+                    <GeometryDrawing Brush="#FFFFFFFF"><GeometryDrawing.Geometry><RectangleGeometry Rect="0,0,24,24"/></GeometryDrawing.Geometry></GeometryDrawing>
+                    <GeometryDrawing Brush="#FFD6D9DE"><GeometryDrawing.Geometry><GeometryGroup><RectangleGeometry Rect="0,0,12,12"/><RectangleGeometry Rect="12,12,12,12"/></GeometryGroup></GeometryDrawing.Geometry></GeometryDrawing>
+                  </DrawingGroup>
+                </DrawingBrush.Drawing>
+              </DrawingBrush>
+            </Border.Background>
+            <Image x:Name="Preview" Stretch="Uniform" MaxWidth="740" MaxHeight="560"/>
+          </Border>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+    <Grid Grid.Row="2" Margin="0,16,0,0">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="12"/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+      <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#C2CAD6" Text="Aperçu sur fond transparent."/>
+      <Button Grid.Column="1" Content="Annuler" IsCancel="True" MinHeight="42"/>
+      <Button Grid.Column="3" Content="Valider le détourage" Click="Continue_Click" IsDefault="True" MinHeight="42" FontWeight="Bold" Background="#187FD1" BorderBrush="#58AFFF"/>
     </Grid>
   </Grid>
 </Window>

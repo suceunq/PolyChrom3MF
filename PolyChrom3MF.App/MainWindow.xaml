@@ -19,7 +19,7 @@
       <MenuItem Header="_Édition"><MenuItem Header="_Annuler" Click="Undo_Click" InputGestureText="Ctrl+Z"/><MenuItem Header="_Rétablir" Click="Redo_Click" InputGestureText="Ctrl+Y"/><Separator/><MenuItem Header="_Paramètres…" Click="Settings_Click"/></MenuItem>
       <MenuItem Header="_Motif"><MenuItem Header="_Importer une image PNG/JPG…" Click="ImportPattern_Click"/><MenuItem Header="_Retirer le motif" Click="RemovePattern_Click"/></MenuItem>
       <MenuItem Header="_Coloration"><MenuItem x:Name="PaintModeMenu" Header="_Sélectionner des zones" IsCheckable="True" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed"/><MenuItem Header="Appliquer la couleur aux zones" Click="ApplyPaintSelection_Click"/><MenuItem Header="Effacer la sélection" Click="ClearPaintSelection_Click"/><Separator/><MenuItem Header="Galerie de styles…" Click="StyleGallery_Click"/><MenuItem Header="Enregistrer le style actuel…" Click="SaveStyle_Click"/></MenuItem>
-      <MenuItem Header="_Affichage"><MenuItem Header="Isométrique" Click="ViewIso_Click"/><MenuItem Header="Face" Click="ViewFront_Click"/><MenuItem Header="Arrière" Click="ViewBack_Click"/><MenuItem Header="Gauche" Click="ViewLeft_Click"/><MenuItem Header="Droite" Click="ViewRight_Click"/><MenuItem Header="Dessus" Click="ViewTop_Click"/><MenuItem Header="Dessous" Click="ViewBottom_Click"/><Separator/><MenuItem Header="Afficher/masquer le plateau" Click="ToggleGrid_Click"/><MenuItem Header="Perspective/orthographique" Click="TogglePerspective_Click"/></MenuItem>
+      <MenuItem Header="_Affichage"><MenuItem Header="Isométrique" Click="ViewIso_Click"/><MenuItem Header="Face" Click="ViewFront_Click"/><MenuItem Header="Arrière" Click="ViewBack_Click"/><MenuItem Header="Gauche" Click="ViewLeft_Click"/><MenuItem Header="Droite" Click="ViewRight_Click"/><MenuItem Header="Dessus" Click="ViewTop_Click"/><MenuItem Header="Dessous" Click="ViewBottom_Click"/><Separator/><MenuItem x:Name="PlateMenuItem" Header="Afficher le plateau" IsCheckable="True" Click="ToggleGrid_Click"/><MenuItem x:Name="InertiaMenuItem" Header="Inertie de navigation" IsCheckable="True" Click="ToggleInertia_Click"/><MenuItem Header="Perspective/orthographique" Click="TogglePerspective_Click"/></MenuItem>
       <MenuItem Header="_Aide"><MenuItem Header="Guide des fonctions" Click="HelpGuide_Click"/><MenuItem Header="Assistant de bienvenue" Click="Welcome_Click"/><MenuItem Header="Nouveautés de cette version" Click="WhatsNew_Click"/><MenuItem Header="Soutenir le projet via PayPal" Click="Donate_Click"/><MenuItem Header="Rechercher une mise à jour" Click="Update_Click"/><Separator/><MenuItem Header="À propos" Click="About_Click"/></MenuItem>
     </Menu>
 
@@ -58,12 +58,48 @@
 
       <Border x:Name="ViewerPanel" Grid.Column="1" Background="{DynamicResource ViewerBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,10,0">
         <Grid>
-          <Viewport3D x:Name="Viewer" ClipToBounds="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" MouseLeave="Viewer_MouseLeave" ToolTip="Rotation orbitale 360° possible sur le modèle, le plateau ou le fond · Mode normal : gauche = rotation, droit = déplacement · Mode zones : gauche = face ou pinceau, droit = rotation · Molette = zoom sous le curseur"/>
+          <Viewport3D x:Name="Viewer" ClipToBounds="True" Focusable="True" MouseWheel="Viewer_MouseWheel" MouseDown="Viewer_MouseDown" MouseMove="Viewer_MouseMove" MouseUp="Viewer_MouseUp" MouseLeave="Viewer_MouseLeave" ToolTip="Toute la vue est interactive · gauche = orbite 360° · double-clic = pivot dynamique · droit = panoramique · molette = zoom sous le curseur"/>
           <ContentControl x:Name="GpuHost" Visibility="Collapsed"/>
           <Canvas IsHitTestVisible="False" Panel.ZIndex="15">
             <Polyline x:Name="PaintStrokePreview" Visibility="Collapsed" Stroke="#99FFD32D" StrokeThickness="16"
                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
             <Ellipse x:Name="PaintBrushCursor" Visibility="Collapsed" Stroke="#FFFFD32D" StrokeThickness="2" Fill="#22FFD32D"/>
+          </Canvas>
+          <Canvas x:Name="PatternGizmoCanvas" Visibility="Collapsed" Panel.ZIndex="16">
+            <Border x:Name="PatternGizmo" Width="170" Height="170" BorderBrush="#FF42A5FF" BorderThickness="2"
+                    Background="#080070C0" MouseLeftButtonDown="PatternGizmo_MoveDown" MouseMove="PatternGizmo_MouseMove"
+                    MouseLeftButtonUp="PatternGizmo_MouseUp" MouseRightButtonUp="PatternGizmo_RightButtonUp">
+              <Grid>
+                <TextBlock Text="Glisser pour déplacer" Foreground="#FFFFFFFF" Background="#99000000"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" Padding="6,3"/>
+                <Ellipse Width="18" Height="18" Fill="#FFFFFFFF" Stroke="#FF1785D1" StrokeThickness="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-10,-10,0,0"
+                         Tag="resize" MouseLeftButtonDown="PatternGizmo_HandleDown"/>
+                <Ellipse Width="18" Height="18" Fill="#FFFFFFFF" Stroke="#FF1785D1" StrokeThickness="2" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-10,-10,0"
+                         Tag="resize" MouseLeftButtonDown="PatternGizmo_HandleDown"/>
+                <Ellipse Width="18" Height="18" Fill="#FFFFFFFF" Stroke="#FF1785D1" StrokeThickness="2" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-10,0,0,-10"
+                         Tag="resize" MouseLeftButtonDown="PatternGizmo_HandleDown"/>
+                <Ellipse Width="18" Height="18" Fill="#FFFFFFFF" Stroke="#FF1785D1" StrokeThickness="2" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-10,-10"
+                         Tag="resize" MouseLeftButtonDown="PatternGizmo_HandleDown"/>
+                <Line X1="85" Y1="-34" X2="85" Y2="0" Stroke="#FF42A5FF" StrokeThickness="2"/>
+                <Ellipse Width="22" Height="22" Fill="#FFFFC43D" Stroke="#FFFFFFFF" StrokeThickness="2" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,-45,0,0"
+                         Tag="rotate" MouseLeftButtonDown="PatternGizmo_HandleDown" ToolTip="Tourner le logo"/>
+              </Grid>
+            </Border>
+            <Popup x:Name="PatternGizmoMenu" Placement="MousePoint" StaysOpen="False" AllowsTransparency="True">
+              <Border Width="310" Padding="8" CornerRadius="7" Background="#FF202733" BorderBrush="#FF718096" BorderThickness="1">
+                <StackPanel>
+                  <TextBlock Text="LOGO SÉLECTIONNÉ" Foreground="#FFFFFFFF" FontWeight="Bold" Margin="5,2,5,7"/>
+                  <Button Content="Dupliquer 2 fois" Tag="2" Click="PatternGizmo_Duplicate" HorizontalContentAlignment="Left"/>
+                  <Button Content="Dupliquer 4 fois" Tag="4" Click="PatternGizmo_Duplicate" HorizontalContentAlignment="Left"/>
+                  <Button Content="Dupliquer 8 fois" Tag="8" Click="PatternGizmo_Duplicate" HorizontalContentAlignment="Left"/>
+                  <Button Content="Choisir le nombre de copies…" Tag="custom" Click="PatternGizmo_Duplicate" HorizontalContentAlignment="Left"/>
+                  <Border Height="1" Background="#FF566277" Margin="4,7"/>
+                  <CheckBox x:Name="PatternGizmoGroupMode" Content="Déplacer/redimensionner tout le groupe" Margin="4,3,4,5"/>
+                  <TextBlock Text="Décochez cette option pour modifier seulement le logo sélectionné."
+                             Foreground="#FFC2CAD6" TextWrapping="Wrap" Margin="5,0,5,3"/>
+                </StackPanel>
+              </Border>
+            </Popup>
           </Canvas>
           <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" MaxWidth="250">
             <Button Click="ViewIso_Click" Content="Iso" Margin="2"/><Button Click="ViewFront_Click" Content="Face" Margin="2"/><Button Click="ViewTop_Click" Content="Dessus" Margin="2"/><Button Click="ToggleGrid_Click" Content="Plateau" Margin="2"/><Button Click="Fit_Click" Content="Recentrer" Margin="2"/>
@@ -125,10 +161,13 @@
           <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10">
             <StackPanel>
               <TextBlock Text="CALQUES NON DESTRUCTIFS" FontWeight="Bold"/>
-              <ListBox x:Name="LayersList" Height="120" Margin="0,7,0,6" DisplayMemberPath="Name" SelectionChanged="LayersList_SelectionChanged"/>
+              <ListBox x:Name="LayersList" Height="120" Margin="0,7,0,6" DisplayMemberPath="Name"
+                       SelectionChanged="LayersList_SelectionChanged" MouseDoubleClick="LayersList_MouseDoubleClick"
+                       ToolTip="Double-cliquez sur un calque de motif pour modifier ses logos après validation."/>
               <WrapPanel>
                 <Button Click="AddLayer_Click" Content="+ Calque"/>
                 <Button Click="DuplicateLayer_Click" Content="Dupliquer"/>
+                <Button Click="EditPatternLayer_Click" Content="Modifier motif…"/>
                 <Button Click="RenameLayer_Click" Content="Renommer"/>
                 <Button Click="MergeLayer_Click" Content="Fusionner"/>
                 <Button Click="TextLayer_Click" Content="Texte…"/>

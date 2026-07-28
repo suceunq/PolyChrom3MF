@@ -18,6 +18,8 @@ public sealed class AppSettings
     public double NozzleDiameter { get; set; } = .4;
     public double LayerHeight { get; set; } = .2;
     public bool UseGpuRenderer { get; set; }
+    public bool ShowBuildPlate { get; set; }
+    public bool NavigationInertia { get; set; } = true;
     public List<string> FilamentColors { get; set; } = ["#E53935", "#1E88E5", "#43A047", "#FDD835"];
     public List<string> FilamentMaterials { get; set; } = ["PLA", "PLA", "PLA", "PLA"];
     public List<ExportProfileSettings> ExportProfiles { get; set; } = [];

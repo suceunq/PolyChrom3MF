@@ -340,6 +340,25 @@ public class ThreeMfTests
     [Fact] public void Couverture_desactivee_preserve_la_projection_originale() { var result = PatternService.ApplyCoverage(.25, .75, false, PatternMode.Front, false); Assert.Equal(.25, result.U, 8); Assert.Equal(.75, result.V, 8); Assert.False(result.Repeats); }
     [Fact] public void Ancien_reglage_de_motif_active_la_couverture_par_defaut() { var settings = JsonSerializer.Deserialize<PatternSettings>("{\"ImagePath\":\"motif.png\"}"); Assert.NotNull(settings); Assert.True(settings!.RepeatAcrossModel); }
     [Fact] public void Apercu_du_motif_respecte_l_annulation_du_calcul() { var cancellation = new CancellationTokenSource(); cancellation.Cancel(); Assert.Throws<OperationCanceledException>(() => new PatternService().Apply(FunDocument(), new PaletteService().Create(FunDocument())[0], new PatternSettings(Png()), cancellationToken: cancellation.Token)); }
+    [Fact] public void Tampon_local_ne_colore_que_la_surface_cliquee()
+    {
+        var vertices = new List<Vertex>
+        {
+            new(-1, -1, 0), new(1, -1, 0), new(0, 1, 0),
+            new(-1, -1, 8), new(0, 1, 8), new(1, -1, 8)
+        };
+        var obj = new ModelObject(0, "1", vertices, [new(0, 1, 2), new(3, 4, 5)], "3D/3dmodel.model");
+        var document = new ModelDocument("", new XDocument(), "", [obj], 2, 2, 8, [], 2, null, "millimeter", 0, 0, "3MF");
+        var proposal = new PaletteService().Create(document, colorCount: 4)[0];
+        var settings = new PatternSettings(Png(), FourVariants: false, RepeatAcrossModel: false, BackFacePreview: false,
+            HasSurfaceFrame: true, SurfaceX: 0, SurfaceY: 0, SurfaceZ: 0,
+            SurfaceUx: 1, SurfaceUy: 0, SurfaceUz: 0,
+            SurfaceVx: 0, SurfaceVy: 1, SurfaceVz: 0,
+            SurfaceNx: 0, SurfaceNy: 0, SurfaceNz: 1, SurfaceWorldSize: 4);
+        var result = new PatternService().Apply(document, proposal, settings);
+        Assert.Equal(1, result.ColoredTriangles);
+        Assert.Equal(1, result.TransparentTriangles);
+    }
     [Fact] public void Convertit_un_jpg_en_png_et_supprime_le_fond_des_bords() { var output = PatternService.PrepareImage(JpegWithBackground(), true, 35); Assert.Equal(".png", Path.GetExtension(output)); using var stream = File.OpenRead(output); var bitmap = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0]; var converted = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0); var pixels = new byte[converted.PixelWidth * converted.PixelHeight * 4]; converted.CopyPixels(pixels, converted.PixelWidth * 4, 0); Assert.Equal(0, pixels[3]); var center = ((converted.PixelHeight / 2) * converted.PixelWidth + converted.PixelWidth / 2) * 4; Assert.True(pixels[center + 3] > 0); }
     [Fact] public async Task Prepare_un_jpg_sur_un_thread_de_fond_sans_objet_wpf_partage() { var source = JpegWithBackground(); var output = await Task.Run(() => PatternService.PrepareImage(source, true, 35)); Assert.True(File.Exists(output)); PatternService.ValidateImage(output); }
     [Fact] public void Nettoie_les_notes_de_mise_a_jour_pour_la_fenetre() { var notes = WhatsNewWindow.NormalizeNotes("- Ajout important\n* Correction utile\n\n"); Assert.Equal(["Ajout important", "Correction utile"], notes); }
@@ -522,6 +541,45 @@ public class ThreeMfTests
         System.Windows.Point[] polygon = [new(0, 0), new(10, 0), new(10, 10), new(0, 10)];
         Assert.True(MainWindow.PointInPolygon(new(5, 5), polygon));
         Assert.False(MainWindow.PointInPolygon(new(15, 5), polygon));
+    }
+    [Fact] public void Detourage_permet_suppression_et_restauration_manuelles()
+    {
+        var mask = new ImageMaskDocument(JpegWithBackground());
+        mask.RemoveAutomatic(35);
+        mask.Paint(0, 0, 8, MaskBrushMode.Restore);
+        var output = mask.SavePng();
+        using var stream = File.OpenRead(output);
+        var bitmap = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
+        var converted = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        var pixels = new byte[converted.PixelWidth * converted.PixelHeight * 4];
+        converted.CopyPixels(pixels, converted.PixelWidth * 4, 0);
+        Assert.True(pixels[3] > 0);
+    }
+    [Fact] public void Tampons_se_dupliquent_horizontalement_verticalement_et_en_cercle()
+    {
+        var horizontal = PatternService.BuildOccurrences(new PatternSettings("logo.png", Copies: 3, Spacing: 20));
+        var vertical = PatternService.BuildOccurrences(new PatternSettings("logo.png", Copies: 3, Spacing: 20, Alignment: PatternAlignment.Vertical));
+        var circular = PatternService.BuildOccurrences(new PatternSettings("logo.png", Copies: 4, Spacing: 25, Alignment: PatternAlignment.Circular));
+        Assert.Equal(3, horizontal.Count);
+        Assert.NotEqual(horizontal[0].U, horizontal[2].U);
+        Assert.NotEqual(vertical[0].V, vertical[2].V);
+        Assert.Equal(4, circular.Count);
+        Assert.Equal(4, circular.Select(item => (Math.Round(item.U, 4), Math.Round(item.V, 4))).Distinct().Count());
+    }
+    [Fact] public void Occurrences_manuelles_conservent_leur_objet_et_leur_rotation()
+    {
+        PatternOccurrence[] occurrences = [new(.2, .3, 15, 0), new(.7, .8, -20, 1)];
+        var settings = new PatternSettings("logo.png", Alignment: PatternAlignment.Manual, Occurrences: occurrences);
+        var built = PatternService.BuildOccurrences(settings);
+        Assert.Equal(occurrences, built);
+        PatternService.ValidateSettings(settings);
+    }
+    [Fact] public void Groupe_de_logos_manuel_peut_contenir_soixante_quatre_occurrences()
+    {
+        var occurrences = Enumerable.Range(0, 64).Select(index => new PatternOccurrence(.1 + index * .01, .5, index, index % 2)).ToArray();
+        var settings = new PatternSettings("logo.png", Alignment: PatternAlignment.Manual, Occurrences: occurrences);
+        PatternService.ValidateSettings(settings);
+        Assert.Equal(64, PatternService.BuildOccurrences(settings).Count);
     }
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }

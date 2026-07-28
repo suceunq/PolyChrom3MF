@@ -42,6 +42,7 @@ public partial class MainWindow : Window
     readonly TextPatternService _textPatterns = new();
     readonly GpuViewportHost _gpuViewport;
     readonly System.Windows.Threading.DispatcherTimer _layerPreviewTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
+    readonly System.Windows.Threading.DispatcherTimer _navigationInertiaTimer = new() { Interval = TimeSpan.FromMilliseconds(16) };
     readonly Dictionary<GeometryModel3D, int> _modelObjects = [];
     readonly Dictionary<GeometryModel3D, Dictionary<(int A, int B, int C), int>> _renderTriangleLookup = [];
     readonly Dictionary<int, double> _objectDiagonals = [];
@@ -61,8 +62,14 @@ public partial class MainWindow : Window
     PatternSettings? _pattern;
     PatternWindow? _activePatternEditor;
     System.Windows.Point _last;
+    System.Windows.Point _mouseDownPoint;
+    Vector _navigationVelocity;
+    string? _patternGizmoMode;
+    System.Windows.Point _patternGizmoLast;
+    System.Windows.Point _patternGizmoCenter;
+    Point3D? _patternGizmoWorldPoint;
     double _yaw = -40, _pitch = -25, _zoom = 1;
-    bool _grid = true, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _paintModeBeforePattern, _shutdownForUpdate;
+    bool _grid, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _paintModeBeforePattern, _shutdownForUpdate, _navigationMoved;
     int _generation, _colorCount = 4;
     int _lastSelectionObject = -1, _lastSelectionTriangle = -1;
     string? _lastSlicerFile;
@@ -79,6 +86,10 @@ public partial class MainWindow : Window
         ApplyStandardMenuColors(MainMenu);
         _settingsExistedAtStartup = File.Exists(_settingsService.FilePath);
         _settings = _settingsService.Load();
+        _grid = _settings.ShowBuildPlate;
+        PlateMenuItem.IsChecked = _grid;
+        InertiaMenuItem.IsChecked = _settings.NavigationInertia;
+        _navigationInertiaTimer.Tick += NavigationInertiaTick;
         if (!_settingsExistedAtStartup)
         {
             _settings.LastSeenVersion = UpdateService.CurrentVersion().ToString(3);
@@ -510,15 +521,18 @@ public partial class MainWindow : Window
             PatternService.ValidateImage(file.FileName);
             var options = new ImageImportOptionsWindow(file.FileName) { Owner = this };
             if (options.ShowDialog() != true) return;
-            // Read every WPF control value on the UI thread before starting image processing.
-            var removeBackground = options.RemoveBackground;
-            var tolerance = options.Tolerance;
-            var sourceImage = file.FileName;
-            preparedImage = await Task.Run(() => PatternService.PrepareImage(sourceImage, removeBackground, tolerance));
+            preparedImage = options.PreparedImagePath ?? throw new InvalidDataException("Le détourage du logo n’a pas produit d’image valide.");
             var selectedObject = ObjectsList.SelectedItem as ModelObject;
-            var initial = new PatternSettings(preparedImage, TargetObject: selectedObject?.Index ?? -1, DisplayName: Path.GetFileName(file.FileName));
+            var initial = new PatternSettings(
+                preparedImage,
+                TargetObject: selectedObject?.Index ?? -1,
+                FourVariants: false,
+                DisplayName: Path.GetFileName(file.FileName),
+                RepeatAcrossModel: false,
+                BackFacePreview: false);
             dialog = new PatternWindow(preparedImage, _doc.Objects, _selected.Colors, initial, Path.GetFileName(file.FileName));
             dialog.PreviewRequested += PreviewPattern;
+            dialog.PlacementModeChanged += armed => PatternGizmo.Visibility = armed ? Visibility.Collapsed : Visibility.Visible;
             _activePatternEditor = dialog;
             PatternEditorHost.Content = dialog;
             SetPatternEditingUi(true);
@@ -621,7 +635,7 @@ public partial class MainWindow : Window
                 var layerName = $"Motif · {Path.GetFileNameWithoutExtension(settings.DisplayName ?? settings.ImagePath)} · {targetName}";
                 _proposalLayers[index].Add(CreateDifferenceLayer(layerName, settings.MonochromeLogo ? ColorLayerKind.MonochromeLogo : ColorLayerKind.Image, beforeNewLayer[index], _proposals[index], settings));
             }
-            SelectProposal(selectedIndex); RefreshBindings(); RefreshLayers(); RecenterView(); UpdatePatternText(); _dirty = true;
+            SelectProposal(selectedIndex); RefreshBindings(); RefreshLayers(); Render(); UpdatePatternText(); _dirty = true;
             StatusText.Text = geometry.AddedTriangles > 0
                 ? $"Motif haute précision · {geometry.AddedTriangles:N0} triangles ajoutés localement (niveau {geometry.Levels})."
                 : $"Motif ajouté indépendamment sur {(settings.TargetObject < 0 ? "toute la figurine" : "l’objet sélectionné")}.";
@@ -642,6 +656,16 @@ public partial class MainWindow : Window
             previousCancellation?.Cancel();
             try
             {
+                if (!settings.HasSurfaceFrame && !settings.RepeatAcrossModel)
+                {
+                    var unchangedPreview = previewBase.ToList();
+                    _proposals = unchangedPreview;
+                    _selected = unchangedPreview[selectedIndex];
+                    Render();
+                    StatusText.Text = "Cliquez sur « Placer sur la pièce », puis choisissez la surface du logo.";
+                    dialog.SetPreviewStatus("En attente du placement du logo sur la surface.");
+                    return;
+                }
                 StatusText.Text = "Calcul de l’aperçu du motif…";
                 dialog.SetPreviewStatus("Calcul de l’aperçu en cours…");
                 var previewMode = settings.FourVariants
@@ -751,6 +775,33 @@ public partial class MainWindow : Window
             _ => activePattern
         };
         if (changed == activePattern) return;
+        await ApplyPatternLayerChangeAsync(activePattern, changed);
+    }
+
+    async void EditPatternLayer_Click(object sender, RoutedEventArgs e)
+    {
+        var layer = SelectedLayer();
+        if (_doc is null || _selected is null || layer?.Pattern is not { } current || layer.IsLocked) return;
+        if (_activePatternEditor is not null) return;
+        var editor = new PatternWindow(current.ImagePath, _doc.Objects, _selected.Colors, current, current.DisplayName);
+        editor.PlacementModeChanged += armed => PatternGizmo.Visibility = armed ? Visibility.Collapsed : Visibility.Visible;
+        _activePatternEditor = editor;
+        PatternEditorHost.Content = editor;
+        SetPatternEditingUi(true);
+        bool accepted;
+        try { accepted = await editor.ShowEditorAsync(); }
+        finally
+        {
+            _activePatternEditor = null;
+            PatternEditorHost.Content = null;
+            SetPatternEditingUi(false);
+        }
+        if (accepted) await ApplyPatternLayerChangeAsync(current, editor.Value);
+    }
+
+    async Task ApplyPatternLayerChangeAsync(PatternSettings activePattern, PatternSettings changed)
+    {
+        if (_doc is null) return;
         PushUndo(); _pattern = changed; SetActivity(true, "Actualisation du motif dans la vue 3D…");
         try
         {
@@ -782,7 +833,7 @@ public partial class MainWindow : Window
                 _proposalLayers[index][updated[index].LayerIndex] = replacement;
                 _proposals[index] = _layerService.Compose(_doc, _layerBases[index], _proposalLayers[index]);
             }
-            SelectProposal(selectedIndex); RefreshBindings(); RefreshLayers(); RecenterView(); UpdatePatternText(); _dirty = true;
+            SelectProposal(selectedIndex); RefreshBindings(); RefreshLayers(); Render(); UpdatePatternText(); _dirty = true;
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Transformation du motif", MessageBoxButton.OK, MessageBoxImage.Error); }
         finally { SetActivity(false); }
@@ -797,6 +848,13 @@ public partial class MainWindow : Window
             _pattern = pattern;
             UpdatePatternText();
         }
+    }
+
+    void LayersList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (SelectedLayer()?.Pattern is null) return;
+        EditPatternLayer_Click(sender, e);
+        e.Handled = true;
     }
 
     void UpdateLayerControls()
@@ -1711,6 +1769,7 @@ public partial class MainWindow : Window
         }
         if (GpuHost.Visibility == Visibility.Visible)
             _gpuViewport.SetCamera(_center, _radius, _yaw, _pitch, _zoom);
+        UpdatePatternGizmoProjection();
     }
 
     internal static (Vector3D Direction, Vector3D Up) OrbitFrame(double yawDegrees, double pitchDegrees)
@@ -1750,7 +1809,18 @@ public partial class MainWindow : Window
 
     async void Viewer_MouseDown(object sender, MouseButtonEventArgs e)
     {
+        _navigationInertiaTimer.Stop();
+        _navigationVelocity = default;
         _last = e.GetPosition(Viewer);
+        _mouseDownPoint = _last;
+        _navigationMoved = false;
+        Viewer.Focus();
+        if (_activePatternEditor is { WaitingForSurfacePlacement: true } editor && e.ChangedButton == MouseButton.Left)
+        {
+            PlacePatternFromView(_last, editor);
+            e.Handled = true;
+            return;
+        }
         if (_activePatternEditor is not null &&
             e.ChangedButton is MouseButton.Left or MouseButton.Right)
         {
@@ -1775,7 +1845,11 @@ public partial class MainWindow : Window
             return;
         }
         Viewer.CaptureMouse();
-        if (PaintMode.IsChecked != true && e.ChangedButton == MouseButton.Left && e.ClickCount == 1) SelectFromView(_last);
+        if (PaintMode.IsChecked != true && e.ChangedButton == MouseButton.Left && e.ClickCount == 2)
+        {
+            SetDynamicPivot(_last);
+            _navigationMoved = true;
+        }
         e.Handled = true;
     }
 
@@ -1808,16 +1882,27 @@ public partial class MainWindow : Window
         var rotate = paintMode ? e.RightButton == MouseButtonState.Pressed : e.LeftButton == MouseButtonState.Pressed;
         if (rotate)
         {
-            _yaw += (p.X - _last.X) * .45;
-            _pitch += (p.Y - _last.Y) * .45;
+            var dx = p.X - _last.X;
+            var dy = p.Y - _last.Y;
+            _yaw += dx * .35;
+            _pitch += dy * .35;
+            _navigationVelocity = new Vector(dx * .35, dy * .35);
         }
         else if (!paintMode && e.RightButton == MouseButtonState.Pressed)
         {
-            var scale = _radius * _zoom / Math.Max(200, Viewer.ActualWidth);
-            _center.X -= (p.X - _last.X) * scale;
-            _center.Z += (p.Y - _last.Y) * scale;
+            var dx = p.X - _last.X;
+            var dy = p.Y - _last.Y;
+            var (_, up) = OrbitFrame(_yaw, _pitch);
+            var look = _center - ((ProjectionCamera)Viewer.Camera).Position;
+            look.Normalize();
+            var right = Vector3D.CrossProduct(look, up);
+            right.Normalize();
+            var scale = _radius * _zoom * 2.2 / Math.Max(240, Viewer.ActualWidth);
+            _center += right * (-dx * scale) + up * (dy * scale);
+            _navigationVelocity = default;
         }
         else return;
+        if ((p - _mouseDownPoint).LengthSquared > 9) _navigationMoved = true;
         _last = p;
         UpdateCamera();
     }
@@ -1870,6 +1955,279 @@ public partial class MainWindow : Window
             return;
         }
         Viewer.ReleaseMouseCapture();
+        if (PaintMode.IsChecked != true && e.ChangedButton == MouseButton.Left)
+        {
+            if (!_navigationMoved && (e.GetPosition(Viewer) - _mouseDownPoint).LengthSquared <= 9)
+                SelectFromView(e.GetPosition(Viewer));
+            else if (_settings.NavigationInertia && _navigationVelocity.Length > .18)
+                _navigationInertiaTimer.Start();
+        }
+        e.Handled = true;
+    }
+
+    void NavigationInertiaTick(object? sender, EventArgs e)
+    {
+        _navigationVelocity *= .86;
+        if (_navigationVelocity.Length < .04)
+        {
+            _navigationInertiaTimer.Stop();
+            return;
+        }
+        _yaw += _navigationVelocity.X;
+        _pitch += _navigationVelocity.Y;
+        UpdateCamera();
+    }
+
+    void SetDynamicPivot(System.Windows.Point point)
+    {
+        Point3D? pivot = null;
+        VisualTreeHelper.HitTest(Viewer, null, result =>
+        {
+            if (result is RayMeshGeometry3DHitTestResult hit)
+            {
+                pivot = hit.PointHit;
+                return HitTestResultBehavior.Stop;
+            }
+            return HitTestResultBehavior.Continue;
+        }, new PointHitTestParameters(point));
+        if (pivot is null) return;
+        _center = pivot.Value;
+        UpdateCamera();
+        StatusText.Text = "Pivot de rotation placé sur la surface sélectionnée.";
+    }
+
+    void PlacePatternFromView(System.Windows.Point point, PatternWindow editor, bool force = false)
+    {
+        if (_doc is null) return;
+        RayMeshGeometry3DHitTestResult? surface = null;
+        VisualTreeHelper.HitTest(Viewer, null, result =>
+        {
+            if (result is RayMeshGeometry3DHitTestResult hit &&
+                hit.ModelHit is GeometryModel3D model &&
+                _modelObjects.ContainsKey(model))
+            {
+                surface = hit;
+                return HitTestResultBehavior.Stop;
+            }
+            return HitTestResultBehavior.Continue;
+        }, new PointHitTestParameters(point));
+        if (surface is null || surface.ModelHit is not GeometryModel3D geometry || !_modelObjects.TryGetValue(geometry, out var objectIndex))
+        {
+            StatusText.Text = "Cliquez directement sur une surface visible du modèle.";
+            return;
+        }
+        var hitPoint = surface.PointHit;
+        var p1 = surface.MeshHit.Positions[surface.VertexIndex1];
+        var p2 = surface.MeshHit.Positions[surface.VertexIndex2];
+        var p3 = surface.MeshHit.Positions[surface.VertexIndex3];
+        var normal = Vector3D.CrossProduct(p2 - p1, p3 - p1);
+        if (normal.LengthSquared < 1e-16) return;
+        normal.Normalize();
+        if (Viewer.Camera is ProjectionCamera camera)
+        {
+            var towardCamera = camera.Position - hitPoint;
+            if (Vector3D.DotProduct(normal, towardCamera) < 0) normal = -normal;
+        }
+        var cameraLook = (Viewer.Camera as ProjectionCamera)?.LookDirection ?? new Vector3D(0, 1, 0);
+        var cameraUp = (Viewer.Camera as ProjectionCamera)?.UpDirection ?? new Vector3D(0, 0, 1);
+        cameraLook.Normalize(); cameraUp.Normalize();
+        var cameraRight = Vector3D.CrossProduct(cameraLook, cameraUp);
+        cameraRight.Normalize();
+        var tangentU = cameraRight - normal * Vector3D.DotProduct(cameraRight, normal);
+        if (tangentU.LengthSquared < 1e-12) tangentU = Vector3D.CrossProduct(cameraUp, normal);
+        tangentU.Normalize();
+        var tangentV = Vector3D.CrossProduct(normal, tangentU);
+        tangentV.Normalize();
+        if (Vector3D.DotProduct(tangentV, cameraUp) < 0) tangentV = -tangentV;
+        // A logo starts at a useful "stamp" size instead of spanning most of
+        // the object. The user can then enlarge it with the visible handles.
+        var worldSize = Math.Max(.01, _objectDiagonals.GetValueOrDefault(objectIndex, _radius * 2) * .18);
+        editor.PlaceOnSurface(
+            objectIndex,
+            hitPoint.X, hitPoint.Y, hitPoint.Z,
+            tangentU.X, tangentU.Y, tangentU.Z,
+            tangentV.X, tangentV.Y, tangentV.Z,
+            normal.X, normal.Y, normal.Z,
+            worldSize,
+            force);
+        _patternGizmoWorldPoint = hitPoint;
+        _patternGizmoCenter = point;
+        UpdatePatternGizmoProjection();
+        ObjectsList.SelectedItem = _doc.Objects.FirstOrDefault(obj => obj.Index == objectIndex);
+        StatusText.Text = "Tampon placé : vous pouvez encore régler sa taille, sa rotation et son inclinaison.";
+    }
+
+    void PatternGizmo_MoveDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left) return;
+        _patternGizmoMode = "move";
+        _patternGizmoLast = e.GetPosition(PatternGizmoCanvas);
+        PatternGizmo.CaptureMouse();
+        e.Handled = true;
+    }
+
+    void PatternGizmo_HandleDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || sender is not FrameworkElement { Tag: string mode }) return;
+        _patternGizmoMode = mode;
+        _patternGizmoLast = e.GetPosition(PatternGizmoCanvas);
+        ((UIElement)sender).CaptureMouse();
+        e.Handled = true;
+    }
+
+    void PatternGizmo_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_patternGizmoMode is null || e.LeftButton != MouseButtonState.Pressed || _activePatternEditor is null) return;
+        var point = e.GetPosition(PatternGizmoCanvas);
+        var delta = point - _patternGizmoLast;
+        var group = PatternGizmoGroupMode.IsChecked == true;
+        if (_patternGizmoMode == "move")
+        {
+            _patternGizmoCenter += delta;
+            // Moving the frame is intentionally visual-only during the drag.
+            // The expensive mesh projection is committed once on mouse-up.
+            Canvas.SetLeft(PatternGizmo, _patternGizmoCenter.X - PatternGizmo.Width / 2);
+            Canvas.SetTop(PatternGizmo, _patternGizmoCenter.Y - PatternGizmo.Height / 2);
+        }
+        else if (_patternGizmoMode == "resize")
+        {
+            var center = _patternGizmoCenter;
+            var oldDistance = Math.Max(1, (_patternGizmoLast - center).Length);
+            var newDistance = Math.Max(1, (point - center).Length);
+            var factor = Math.Clamp(newDistance / oldDistance, .5, 2);
+            _activePatternEditor.AdjustFromGizmo(0, 0, factor, 0, group, Viewer.ActualWidth, Viewer.ActualHeight, preview: false);
+        }
+        else if (_patternGizmoMode == "rotate")
+        {
+            var oldAngle = Math.Atan2(_patternGizmoLast.Y - _patternGizmoCenter.Y, _patternGizmoLast.X - _patternGizmoCenter.X);
+            var newAngle = Math.Atan2(point.Y - _patternGizmoCenter.Y, point.X - _patternGizmoCenter.X);
+            _activePatternEditor.AdjustFromGizmo(0, 0, 1, (newAngle - oldAngle) * 180 / Math.PI, group, Viewer.ActualWidth, Viewer.ActualHeight, preview: false);
+        }
+        _patternGizmoLast = point;
+        if (_patternGizmoMode != "move") UpdatePatternGizmoProjection();
+        e.Handled = true;
+    }
+
+    void PatternGizmo_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_patternGizmoMode is null) return;
+        var completedMode = _patternGizmoMode;
+        Mouse.Capture(null);
+        _patternGizmoMode = null;
+        if (_activePatternEditor is not null)
+        {
+            if (completedMode == "move") PlacePatternFromView(_patternGizmoCenter, _activePatternEditor, force: true);
+            else _activePatternEditor.CommitGizmoPreview();
+        }
+        e.Handled = true;
+    }
+
+    void PatternGizmo_RightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_activePatternEditor is null) return;
+        PatternGizmoMenu.PlacementTarget = PatternGizmo;
+        PatternGizmoMenu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    void PatternGizmo_Duplicate(object sender, RoutedEventArgs e)
+    {
+        PatternGizmoMenu.IsOpen = false;
+        if (_activePatternEditor is null || sender is not FrameworkElement { Tag: string value }) return;
+        var count = value == "custom"
+            ? int.TryParse(PromptText("Dupliquer le logo", "Nombre total de logos (1 à 64)", "4"), out var requested) ? Math.Clamp(requested, 1, 64) : 0
+            : int.Parse(value);
+        if (count <= 0) return;
+        _activePatternEditor.DuplicateSelected(count, PatternGizmoGroupMode.IsChecked == true);
+        StatusText.Text = $"{count} occurrences du logo prêtes à être déplacées ensemble ou séparément.";
+    }
+
+    void UpdatePatternGizmo(double scale)
+    {
+        if (_activePatternEditor is null || PatternGizmoCanvas.Visibility != Visibility.Visible) return;
+        var size = Math.Clamp(90 + scale * .8, 90, 360);
+        PatternGizmo.Width = PatternGizmo.Height = size;
+        PatternGizmo.RenderTransform = Transform.Identity;
+        Canvas.SetLeft(PatternGizmo, _patternGizmoCenter.X - size / 2);
+        Canvas.SetTop(PatternGizmo, _patternGizmoCenter.Y - size / 2);
+    }
+
+    void UpdatePatternGizmoProjection()
+    {
+        if (_patternGizmoWorldPoint is not Point3D world ||
+            PatternGizmoCanvas.Visibility != Visibility.Visible ||
+            Viewer.Camera is not ProjectionCamera camera ||
+            _activePatternEditor is null) return;
+        var settings = _activePatternEditor.Value;
+        if (!TryProjectToViewport(world, camera, out var center))
+        {
+            PatternGizmo.Visibility = Visibility.Collapsed;
+            return;
+        }
+        PatternGizmo.Visibility = Visibility.Visible;
+        _patternGizmoCenter = center;
+        if (!settings.HasSurfaceFrame)
+        {
+            UpdatePatternGizmo(settings.Scale);
+            return;
+        }
+        var tangentU = new Vector3D(settings.SurfaceUx, settings.SurfaceUy, settings.SurfaceUz);
+        var tangentV = new Vector3D(settings.SurfaceVx, settings.SurfaceVy, settings.SurfaceVz);
+        if (tangentU.LengthSquared < 1e-12 || tangentV.LengthSquared < 1e-12)
+        {
+            UpdatePatternGizmo(settings.Scale);
+            return;
+        }
+        tangentU.Normalize();
+        tangentV.Normalize();
+        var halfWidthWorld = settings.SurfaceWorldSize * settings.Scale / 100d * settings.StretchX / 100d / 2;
+        var halfHeightWorld = settings.SurfaceWorldSize * settings.Scale / 100d * settings.StretchY / 100d / 2;
+        if (!TryProjectToViewport(world + tangentU * halfWidthWorld, camera, out var edgeU) ||
+            !TryProjectToViewport(world + tangentV * halfHeightWorld, camera, out var edgeV))
+        {
+            UpdatePatternGizmo(settings.Scale);
+            return;
+        }
+        var projectedU = edgeU - center;
+        var projectedV = edgeV - center;
+        var width = Math.Clamp(projectedU.Length * 2, 24, Math.Max(24, Viewer.ActualWidth * 1.5));
+        var height = Math.Clamp(projectedV.Length * 2, 24, Math.Max(24, Viewer.ActualHeight * 1.5));
+        PatternGizmo.Width = width;
+        PatternGizmo.Height = height;
+        PatternGizmo.RenderTransformOrigin = new System.Windows.Point(.5, .5);
+        var angle = Math.Atan2(projectedU.Y, projectedU.X) * 180 / Math.PI - settings.Rotation;
+        PatternGizmo.RenderTransform = new RotateTransform(angle);
+        Canvas.SetLeft(PatternGizmo, center.X - width / 2);
+        Canvas.SetTop(PatternGizmo, center.Y - height / 2);
+    }
+
+    bool TryProjectToViewport(Point3D world, ProjectionCamera camera, out System.Windows.Point point)
+    {
+        point = default;
+        var forward = camera.LookDirection; var up = camera.UpDirection;
+        if (!NormalizeBasis(ref forward, ref up, out var right)) return false;
+        var relative = world - camera.Position;
+        var depth = Vector3D.DotProduct(relative, forward);
+        if (depth <= 1e-8) return false;
+        double x; double y;
+        if (camera is PerspectiveCamera perspective)
+        {
+            // WPF defines PerspectiveCamera.FieldOfView horizontally.
+            var halfWidth = Math.Tan(perspective.FieldOfView * Math.PI / 360) * depth;
+            var halfHeight = halfWidth * Viewer.ActualHeight / Math.Max(1, Viewer.ActualWidth);
+            x = Vector3D.DotProduct(relative, right) / Math.Max(1e-8, halfWidth);
+            y = Vector3D.DotProduct(relative, up) / Math.Max(1e-8, halfHeight);
+        }
+        else if (camera is OrthographicCamera orthographic)
+        {
+            var halfWidth = orthographic.Width / 2;
+            var halfHeight = halfWidth * Viewer.ActualHeight / Math.Max(1, Viewer.ActualWidth);
+            x = Vector3D.DotProduct(relative, right) / Math.Max(1e-8, halfWidth);
+            y = Vector3D.DotProduct(relative, up) / Math.Max(1e-8, halfHeight);
+        }
+        else return false;
+        point = new System.Windows.Point((x + 1) * Viewer.ActualWidth / 2, (1 - y) * Viewer.ActualHeight / 2);
+        return double.IsFinite(point.X) && double.IsFinite(point.Y);
     }
 
     void Viewer_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
@@ -1902,8 +2260,9 @@ public partial class MainWindow : Window
         {
             origin = perspective.Position; forward = perspective.LookDirection; up = perspective.UpDirection;
             if (!NormalizeBasis(ref forward, ref up, out var right)) return null;
-            var halfHeight = Math.Tan(perspective.FieldOfView * Math.PI / 360);
-            var x = (cursor.X * 2 / viewportWidth - 1) * viewportWidth / viewportHeight * halfHeight;
+            var halfWidth = Math.Tan(perspective.FieldOfView * Math.PI / 360);
+            var halfHeight = halfWidth * viewportHeight / viewportWidth;
+            var x = (cursor.X * 2 / viewportWidth - 1) * halfWidth;
             var y = (1 - cursor.Y * 2 / viewportHeight) * halfHeight;
             ray = forward + right * x + up * y;
         }
@@ -2157,7 +2516,26 @@ public partial class MainWindow : Window
     void ViewTop_Click(object sender, RoutedEventArgs e) { _yaw = 0; _pitch = 89; UpdateCamera(); }
     void ViewBottom_Click(object sender, RoutedEventArgs e) { _yaw = 0; _pitch = -89; UpdateCamera(); }
     void Fit_Click(object sender, RoutedEventArgs e) => FitCamera();
-    void ToggleGrid_Click(object sender, RoutedEventArgs e) { _grid = !_grid; Render(); StatusText.Text = _grid ? "Plateau affiché." : "Plateau masqué."; }
+    void ToggleGrid_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender == PlateMenuItem) _grid = PlateMenuItem.IsChecked == true;
+        else
+        {
+            _grid = !_grid;
+            PlateMenuItem.IsChecked = _grid;
+        }
+        _settings.ShowBuildPlate = _grid;
+        _settingsService.Save(_settings);
+        Render();
+        StatusText.Text = _grid ? "Plateau affiché." : "Plateau masqué.";
+    }
+    void ToggleInertia_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.NavigationInertia = InertiaMenuItem.IsChecked == true;
+        _settingsService.Save(_settings);
+        if (!_settings.NavigationInertia) _navigationInertiaTimer.Stop();
+        StatusText.Text = _settings.NavigationInertia ? "Inertie de navigation activée." : "Inertie de navigation désactivée.";
+    }
     void TogglePerspective_Click(object sender, RoutedEventArgs e) { _perspective = !_perspective; UpdateCamera(); }
 
     void Settings_Click(object sender, RoutedEventArgs e) { var dialog = new SettingsWindow(_settings) { Owner = this }; if (dialog.ShowDialog() == true) { _settings = dialog.Value; _settingsService.Save(_settings); EnsurePreferredSlicer(); ApplyTheme(); UpdateSlicerButton(); Render(); } }
@@ -2238,6 +2616,18 @@ public partial class MainWindow : Window
             LeftColumn.Width = new GridLength(0);
             RightColumn.Width = new GridLength(520);
             Viewer.Cursor = System.Windows.Input.Cursors.Arrow;
+            PatternGizmoCanvas.Visibility = Visibility.Visible;
+            if (_activePatternEditor?.Value is { HasSurfaceFrame: true } placed)
+            {
+                _patternGizmoWorldPoint = new Point3D(placed.SurfaceX, placed.SurfaceY, placed.SurfaceZ);
+                PatternGizmo.Visibility = Visibility.Visible;
+                UpdatePatternGizmoProjection();
+            }
+            else
+            {
+                _patternGizmoWorldPoint = null;
+                PatternGizmo.Visibility = Visibility.Collapsed;
+            }
             StatusText.Text = "Atelier motif : gauche = rotation · droit = déplacement · molette = zoom.";
         }
         else
@@ -2252,6 +2642,10 @@ public partial class MainWindow : Window
             PaintMode.IsChecked = _paintModeBeforePattern;
             PaintModeMenu.IsChecked = _paintModeBeforePattern;
             _paintModeBeforePattern = false;
+            PatternGizmoCanvas.Visibility = Visibility.Collapsed;
+            PatternGizmo.Visibility = Visibility.Visible;
+            _patternGizmoWorldPoint = null;
+            _patternGizmoMode = null;
         }
         if (!active && _doc is not null)
             StatusText.Text = "Motif prêt — vous pouvez continuer à travailler sur le modèle.";

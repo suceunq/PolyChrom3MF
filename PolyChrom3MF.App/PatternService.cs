@@ -5,6 +5,8 @@ using System.Windows.Media.Imaging;
 namespace PolyChrom3MF.App;
 
 public enum PatternMode { Front, Cylindrical, Repeated, Triplanar }
+public enum PatternAlignment { Horizontal, Vertical, Circular, Manual }
+public sealed record PatternOccurrence(double U, double V, double Rotation = 0, int TargetObject = -1, bool Enabled = true);
 
 public sealed record PatternSettings(
     string ImagePath,
@@ -28,7 +30,29 @@ public sealed record PatternSettings(
     double Spacing = 0,
     bool MirrorX = false,
     bool MirrorY = false,
-    bool BackFacePreview = true);
+    bool BackFacePreview = true,
+    double AnchorU = .5,
+    double AnchorV = .5,
+    double TiltX = 0,
+    double TiltY = 0,
+    double ReliefDepth = 0,
+    PatternAlignment Alignment = PatternAlignment.Horizontal,
+    IReadOnlyList<PatternOccurrence>? Occurrences = null,
+    bool LocalSubdivision = true,
+    bool HasSurfaceFrame = false,
+    double SurfaceX = 0,
+    double SurfaceY = 0,
+    double SurfaceZ = 0,
+    double SurfaceUx = 1,
+    double SurfaceUy = 0,
+    double SurfaceUz = 0,
+    double SurfaceVx = 0,
+    double SurfaceVy = 0,
+    double SurfaceVz = 1,
+    double SurfaceNx = 0,
+    double SurfaceNy = -1,
+    double SurfaceNz = 0,
+    double SurfaceWorldSize = 1);
 
 public sealed record PatternApplyResult(int ColoredTriangles, int TransparentTriangles)
 {
@@ -55,7 +79,7 @@ public sealed class PatternService
         var refinement = new Dictionary<int, HashSet<int>>();
         foreach (var obj in document.Objects)
         {
-            if (settings.TargetObject >= 0 && obj.Index != settings.TargetObject) continue;
+            if (settings.TargetObject >= 0 && settings.Alignment != PatternAlignment.Manual && obj.Index != settings.TargetObject) continue;
             if (!proposal.TriangleAssignments.TryGetValue(obj.Index, out var assignments) || assignments.Length != obj.Triangles.Count)
             {
                 assignments = new int[obj.Triangles.Count];
@@ -69,26 +93,54 @@ public sealed class PatternService
                 var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
                 int? Classify(double x, double y, double z)
                 {
-                    Pixel pixel;
                     if (mode == PatternMode.Triplanar)
                     {
-                        pixel = TriplanarPixel(image, x, y, z, a, b, c, bounds, settings);
+                        var pixel = TriplanarPixel(image, x, y, z, a, b, c, bounds, settings);
+                        return ClassifyPixel(pixel);
                     }
-                    else
+                    double u; double v; bool repeats;
+                    if (settings.HasSurfaceFrame)
                     {
-                        var (u, v, repeats) = Coordinates(mode, x, y, z, a, b, c, bounds);
-                        (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
-                        (u, v) = Transform(u, v, settings, repeats);
-                        if (!repeats && (u < 0 || u > 1 || v < 0 || v > 1)) return null;
-                        pixel = repeats
-                            ? image.RepeatingPixel(u, v)
-                            : image.Pixel(Math.Clamp(u, 0, 1), Math.Clamp(v, 0, 1));
+                        var dx = x - settings.SurfaceX;
+                        var dy = y - settings.SurfaceY;
+                        var dz = z - settings.SurfaceZ;
+                        var normalDistance = dx * settings.SurfaceNx + dy * settings.SurfaceNy + dz * settings.SurfaceNz;
+                        // Keep the decal close to the tangent plane selected by
+                        // the user. A deep slab makes the same image reappear on
+                        // curved or opposite parts of the mesh, visually far
+                        // outside the manipulation frame.
+                        if (Math.Abs(normalDistance) > settings.SurfaceWorldSize * .12) return null;
+                        var ux = b.X - a.X; var uy = b.Y - a.Y; var uz = b.Z - a.Z;
+                        var vx = c.X - a.X; var vy = c.Y - a.Y; var vz = c.Z - a.Z;
+                        var nx = uy * vz - uz * vy; var ny = uz * vx - ux * vz; var nz = ux * vy - uy * vx;
+                        var normalAgreement = nx * settings.SurfaceNx + ny * settings.SurfaceNy + nz * settings.SurfaceNz;
+                        if (normalAgreement < 0 && !settings.BackFacePreview) return null;
+                        u = .5 + (dx * settings.SurfaceUx + dy * settings.SurfaceUy + dz * settings.SurfaceUz) / settings.SurfaceWorldSize;
+                        v = .5 - (dx * settings.SurfaceVx + dy * settings.SurfaceVy + dz * settings.SurfaceVz) / settings.SurfaceWorldSize;
+                        repeats = false;
                     }
+                    else (u, v, repeats) = Coordinates(mode, x, y, z, a, b, c, bounds);
+                    (u, v, repeats) = ApplyCoverage(u, v, repeats, mode, settings.RepeatAcrossModel);
+                    foreach (var occurrence in BuildOccurrences(settings))
+                    {
+                        if (!occurrence.Enabled || occurrence.TargetObject >= 0 && occurrence.TargetObject != obj.Index) continue;
+                        var transformed = Transform(u, v, settings, repeats, occurrence);
+                        if (!repeats && (transformed.U < 0 || transformed.U > 1 || transformed.V < 0 || transformed.V > 1)) continue;
+                        var pixel = repeats
+                            ? image.RepeatingPixel(transformed.U, transformed.V)
+                            : image.Pixel(Math.Clamp(transformed.U, 0, 1), Math.Clamp(transformed.V, 0, 1));
+                        if (ClassifyPixel(pixel) is int color) return color;
+                    }
+                    return null;
+
+                    int? ClassifyPixel(Pixel pixel)
+                    {
                     if (pixel.A < settings.AlphaThreshold) return null;
                     if (!settings.MonochromeLogo) return Nearest(pixel, palette);
                     if (!IsLogoPixel(pixel.R, pixel.G, pixel.B, settings.LogoThreshold, settings.InvertLogo))
                         return null;
                     return settings.LogoColorIndex;
+                    }
                 }
 
                 var center = Classify((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
@@ -102,7 +154,7 @@ public sealed class PatternService
                         Classify((b.X + c.X) / 2, (b.Y + c.Y) / 2, (b.Z + c.Z) / 2),
                         Classify((c.X + a.X) / 2, (c.Y + a.Y) / 2, (c.Z + a.Z) / 2)
                     };
-                    if (samples.Count > 1)
+                    if (settings.LocalSubdivision && (center is not null || samples.Count > 1))
                     {
                         if (!refinement.TryGetValue(obj.Index, out var triangles)) refinement[obj.Index] = triangles = [];
                         triangles.Add(triangleIndex);
@@ -130,8 +182,19 @@ public sealed class PatternService
         Pixel Sample(double u, double v)
         {
             (u, v, _) = ApplyCoverage(u, v, true, PatternMode.Triplanar, settings.RepeatAcrossModel);
-            (u, v) = Transform(u, v, settings, true);
-            return image.RepeatingPixel(u, v);
+            Pixel? fallback = null;
+            foreach (var occurrence in BuildOccurrences(settings))
+            {
+                if (!occurrence.Enabled) continue;
+                var transformed = Transform(u, v, settings, settings.RepeatAcrossModel, occurrence);
+                if (!settings.RepeatAcrossModel && (transformed.U < 0 || transformed.U > 1 || transformed.V < 0 || transformed.V > 1)) continue;
+                var pixel = settings.RepeatAcrossModel
+                    ? image.RepeatingPixel(transformed.U, transformed.V)
+                    : image.Pixel(Math.Clamp(transformed.U, 0, 1), Math.Clamp(transformed.V, 0, 1));
+                fallback ??= pixel;
+                if (pixel.A >= settings.AlphaThreshold) return pixel;
+            }
+            return fallback ?? new Pixel(0, 0, 0, 0);
         }
 
         var yz = Sample(ny * 2, (1 - nz) * 2);
@@ -157,7 +220,7 @@ public sealed class PatternService
 
     public static void ValidateSettings(PatternSettings settings)
     {
-        if (settings is null || string.IsNullOrWhiteSpace(settings.ImagePath) || settings.ImagePath.Length > 1024 || !Enum.IsDefined(settings.Mode) || !double.IsFinite(settings.Scale) || settings.Scale is < 10 or > 400 || !double.IsFinite(settings.Rotation) || settings.Rotation is < -180 or > 180 || !double.IsFinite(settings.OffsetX) || settings.OffsetX is < -200 or > 200 || !double.IsFinite(settings.OffsetY) || settings.OffsetY is < -200 or > 200 || settings.TargetObject < -1 || settings.DisplayName?.Length > 260 || settings.DisplayName?.Any(char.IsControl) == true || settings.LogoColorIndex is < 0 or > 31 || settings.LogoThreshold is < 1 or > 254 || !double.IsFinite(settings.StretchX) || settings.StretchX is < 10 or > 400 || !double.IsFinite(settings.StretchY) || settings.StretchY is < 10 or > 400 || settings.Copies is < 1 or > 32 || !double.IsFinite(settings.Spacing) || settings.Spacing is < 0 or > 300)
+        if (settings is null || string.IsNullOrWhiteSpace(settings.ImagePath) || settings.ImagePath.Length > 1024 || !Enum.IsDefined(settings.Mode) || !Enum.IsDefined(settings.Alignment) || !double.IsFinite(settings.Scale) || settings.Scale is < 10 or > 400 || !double.IsFinite(settings.Rotation) || settings.Rotation is < -180 or > 180 || !double.IsFinite(settings.OffsetX) || settings.OffsetX is < -200 or > 200 || !double.IsFinite(settings.OffsetY) || settings.OffsetY is < -200 or > 200 || settings.TargetObject < -1 || settings.DisplayName?.Length > 260 || settings.DisplayName?.Any(char.IsControl) == true || settings.LogoColorIndex is < 0 or > 31 || settings.LogoThreshold is < 1 or > 254 || !double.IsFinite(settings.StretchX) || settings.StretchX is < 10 or > 400 || !double.IsFinite(settings.StretchY) || settings.StretchY is < 10 or > 400 || settings.Copies is < 1 or > 32 || !double.IsFinite(settings.Spacing) || settings.Spacing is < 0 or > 300 || !double.IsFinite(settings.AnchorU) || settings.AnchorU is < -2 or > 3 || !double.IsFinite(settings.AnchorV) || settings.AnchorV is < -2 or > 3 || !double.IsFinite(settings.TiltX) || settings.TiltX is < -75 or > 75 || !double.IsFinite(settings.TiltY) || settings.TiltY is < -75 or > 75 || !double.IsFinite(settings.ReliefDepth) || settings.ReliefDepth is < -2 or > 5 || settings.Occurrences is { Count: > 64 } || settings.Occurrences?.Any(item => !double.IsFinite(item.U) || !double.IsFinite(item.V) || !double.IsFinite(item.Rotation) || item.U is < -2 or > 3 || item.V is < -2 or > 3 || item.Rotation is < -360 or > 360 || item.TargetObject < -1) == true || settings.HasSurfaceFrame && (!double.IsFinite(settings.SurfaceX) || !double.IsFinite(settings.SurfaceY) || !double.IsFinite(settings.SurfaceZ) || !double.IsFinite(settings.SurfaceUx) || !double.IsFinite(settings.SurfaceUy) || !double.IsFinite(settings.SurfaceUz) || !double.IsFinite(settings.SurfaceVx) || !double.IsFinite(settings.SurfaceVy) || !double.IsFinite(settings.SurfaceVz) || !double.IsFinite(settings.SurfaceNx) || !double.IsFinite(settings.SurfaceNy) || !double.IsFinite(settings.SurfaceNz) || !double.IsFinite(settings.SurfaceWorldSize) || settings.SurfaceWorldSize <= 1e-6))
             throw new InvalidDataException("Les réglages du motif image sont invalides.");
     }
 
@@ -293,7 +356,7 @@ public sealed class PatternService
     static (double U, double V, bool Repeats) Coordinates(PatternMode mode, double x, double y, double z, Vertex a, Vertex b, Vertex c, ModelBounds bounds)
     {
         var nx = (x - bounds.MinX) / bounds.SizeX; var ny = (y - bounds.MinY) / bounds.SizeY; var nz = (z - bounds.MinZ) / bounds.SizeZ;
-        if (mode == PatternMode.Cylindrical) return ((Math.Atan2(y - bounds.CenterY, x - bounds.CenterX) + Math.PI) / (2 * Math.PI), 1 - nz, true);
+        if (mode == PatternMode.Cylindrical) return ((Math.Atan2(y - bounds.CenterY, x - bounds.CenterX) + Math.PI) / (2 * Math.PI), 1 - nz, false);
         if (mode == PatternMode.Repeated) return (nx * 3, (1 - nz) * 3, true);
         if (mode != PatternMode.Triplanar) return (nx, 1 - nz, false);
         var ux = b.X - a.X; var uy = b.Y - a.Y; var uz = b.Z - a.Z; var vx = c.X - a.X; var vy = c.Y - a.Y; var vz = c.Z - a.Z;
@@ -302,23 +365,63 @@ public sealed class PatternService
         return normalX >= normalY ? (ny * 2, (1 - nz) * 2, true) : (nx * 2, (1 - nz) * 2, true);
     }
 
-    static (double U, double V) Transform(double u, double v, PatternSettings settings, bool repeats)
+    static (double U, double V) Transform(double u, double v, PatternSettings settings, bool repeats, PatternOccurrence? occurrence = null)
     {
+        occurrence ??= new PatternOccurrence(settings.AnchorU, settings.AnchorV);
         var coverageX = settings.Scale / 100d * settings.StretchX / 100d;
         var coverageY = settings.Scale / 100d * settings.StretchY / 100d;
-        u = (u - .5) / coverageX + .5 + settings.OffsetX / 100d;
-        v = (v - .5) / coverageY + .5 - settings.OffsetY / 100d;
-        var radians = settings.Rotation * Math.PI / 180; var cos = Math.Cos(radians); var sin = Math.Sin(radians);
+        u = (u - occurrence.U) / coverageX + .5 + settings.OffsetX / 100d;
+        v = (v - occurrence.V) / coverageY + .5 - settings.OffsetY / 100d;
+        var shearX = Math.Tan(settings.TiltX * Math.PI / 180) * .35;
+        var shearY = Math.Tan(settings.TiltY * Math.PI / 180) * .35;
+        var sx = u - .5; var sy = v - .5;
+        u += sy * shearX;
+        v += sx * shearY;
+        var radians = (settings.Rotation + occurrence.Rotation) * Math.PI / 180; var cos = Math.Cos(radians); var sin = Math.Sin(radians);
         var x = u - .5; var y = v - .5;
         u = x * cos - y * sin + .5; v = x * sin + y * cos + .5;
-        if (settings.Copies > 1)
-        {
-            var period = 1 + settings.Spacing / 100d;
-            u = u * settings.Copies / period;
-        }
         if (settings.MirrorX) u = 1 - u;
         if (settings.MirrorY) v = 1 - v;
         return (u, v);
+    }
+
+    public static IReadOnlyList<PatternOccurrence> BuildOccurrences(PatternSettings settings)
+    {
+        if (settings.Alignment == PatternAlignment.Manual && settings.Occurrences is { Count: > 0 })
+            return settings.Occurrences.Where(item => item.Enabled).Take(64).ToArray();
+        var count = Math.Clamp(settings.Copies, 1, 32);
+        if (count == 1) return [new PatternOccurrence(settings.AnchorU, settings.AnchorV, TargetObject: settings.TargetObject)];
+        var spacing = Math.Max(.02, settings.Spacing / 100d);
+        var result = new List<PatternOccurrence>(count);
+        for (var index = 0; index < count; index++)
+        {
+            var centered = index - (count - 1) / 2d;
+            result.Add(settings.Alignment switch
+            {
+                PatternAlignment.Vertical => new(settings.AnchorU, settings.AnchorV + centered * spacing, TargetObject: settings.TargetObject),
+                PatternAlignment.Circular => new(
+                    settings.AnchorU + Math.Cos(index * Math.PI * 2 / count) * spacing,
+                    settings.AnchorV + Math.Sin(index * Math.PI * 2 / count) * spacing,
+                    index * 360d / count + 90,
+                    settings.TargetObject),
+                _ => new(settings.AnchorU + centered * spacing, settings.AnchorV, TargetObject: settings.TargetObject)
+            });
+        }
+        return result;
+    }
+
+    public static (double U, double V) SurfaceCoordinates(ModelDocument document, PatternMode mode, double x, double y, double z)
+    {
+        var bounds = Bounds(document);
+        var nx = (x - bounds.MinX) / bounds.SizeX;
+        var ny = (y - bounds.MinY) / bounds.SizeY;
+        var nz = (z - bounds.MinZ) / bounds.SizeZ;
+        return mode switch
+        {
+            PatternMode.Cylindrical => ((Math.Atan2(y - bounds.CenterY, x - bounds.CenterX) + Math.PI) / (2 * Math.PI), 1 - nz),
+            PatternMode.Triplanar => (nx, 1 - nz),
+            _ => (nx, 1 - nz)
+        };
     }
 
     static int Nearest(Pixel pixel, IReadOnlyList<System.Windows.Media.Color> colors)

@@ -11,6 +11,15 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
+        "Placement libre des logos PNG/JPEG directement sur la surface choisie du modèle.\n" +
+        "Nouveau détourage avec suppression automatique ou manuelle du fond, gomme, restauration et aperçu transparent.\n" +
+        "Poignées visibles pour déplacer, redimensionner et tourner le logo sans recalcul pendant le glissement.\n" +
+        "Le clic droit ouvre maintenant un panneau sombre lisible pour dupliquer le logo 2, 4, 8 fois ou selon un nombre personnalisé.\n" +
+        "Les logos dupliqués peuvent être déplacés ensemble ou séparément.\n" +
+        "Chaque motif reste non destructif et peut être rouvert par le bouton « Modifier motif » ou par double-clic sur son calque.\n" +
+        "La projection locale suit précisément la surface cliquée et limite le motif à la zone du tampon.\n" +
+        "Navigation 3D modernisée : orbite libre, panoramique, zoom sous le curseur, pivot dynamique et plateau masqué par défaut.\n" +
+        "Correction des coordonnées de projection en perspective et amélioration de la fluidité sur les modèles volumineux.\n" +
         "Nouvel atelier de placement des motifs PNG/JPEG intégré directement à la fenêtre principale.\n" +
         "L’interface habituelle revient automatiquement après validation ou annulation.\n" +
         "Navigation 3D inchangée : clic gauche pour tourner, clic droit pour déplacer et molette pour zoomer.\n" +
