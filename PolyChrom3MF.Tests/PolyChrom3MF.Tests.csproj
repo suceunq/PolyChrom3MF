@@ -16,7 +16,10 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>
-  <ItemGroup><ProjectReference Include="..\\PolyChrom3MF.App\\PolyChrom3MF.App.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\\PolyChrom3MF.App\\PolyChrom3MF.App.csproj" />
+    <ProjectReference Include="..\\PolyChrom3MF.Logos\\PolyChrom3MF.Logos.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
     <Using Include="Xunit" />

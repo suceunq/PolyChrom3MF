@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
+using PolyChrom3MF.Logos;
 using Color = System.Windows.Media.Color;
 using DataFormats = System.Windows.DataFormats;
 using MessageBox = System.Windows.MessageBox;
@@ -26,16 +27,16 @@ public partial class MainWindow : Window
     // The voxel LOD preserves the overall shape while avoiding camera lag.
     const long FullDetailTriangleLimit = 500_000;
     const int LargeModelPreviewTarget = 300_000;
-    // The legacy image/logo editor is intentionally unavailable in 2.0.15.
-    // Existing projects keep their baked triangle colours, but no entry point
-    // may execute the unstable placement pipeline in the user application.
-    static readonly bool ImageImportModuleEnabled = false;
+    // The legacy placement pipeline remains unreachable. Version 2.1 uses the
+    // isolated, tested PolyChrom3MF.Logos engine behind the new workflow.
+    static readonly bool ImageImportModuleEnabled = true;
     internal static bool ImageImportModuleAvailable => ImageImportModuleEnabled;
     readonly ThreeMfService _service = new();
     readonly StlService _stlService = new();
     readonly PaletteService _palettes = new();
     readonly PatternService _patternService = new();
     readonly PatternGeometryService _patternGeometryService = new();
+    readonly LogoApplicationService _logoApplication = new();
     readonly SmartSelectionService _smartSelection = new();
     readonly LocalRefinementService _localRefinement = new();
     readonly LayerService _layerService = new();
@@ -63,6 +64,8 @@ public partial class MainWindow : Window
     List<ColorProposal> _proposals = [];
     List<ColorProposal> _layerBases = [];
     List<List<ColorLayer>> _proposalLayers = [];
+    LogoProject _logoProject = new();
+    List<ColorProposal>? _logoBaseProposals;
     ColorProposal? _selected;
     PatternSettings? _pattern;
     PatternWindow? _activePatternEditor;
@@ -140,7 +143,8 @@ public partial class MainWindow : Window
             if (_doc.TriangleCount > FullDetailTriangleLimit)
                 SetActivity(true, $"Optimisation de l’aperçu de {_doc.TriangleCount:N0} faces…");
             await RebuildPreviewMeshesAsync(_doc);
-            _pattern = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
+            _pattern = null; _logoProject = new LogoProject(); _logoBaseProposals = null;
+            _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
             _lastSlicerFile = path; OpenSlicerButton.IsEnabled = true; UpdateSlicerButton();
             FileText.Text = Path.GetFileName(path);
             var displayedTriangles = _doc.Objects.Sum(obj => _previewMeshes.TryGetValue(obj.Index, out var preview) ? (long)preview.Triangles.Count : obj.Triangles.Count);
@@ -504,6 +508,228 @@ public partial class MainWindow : Window
 
     async void ImportPattern_Click(object sender, RoutedEventArgs e)
     {
+        if (_doc is null || _selected is null)
+        {
+            MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Logo ou image");
+            return;
+        }
+        if (_activePatternEditor is not null)
+        {
+            _activePatternEditor.Focus();
+            return;
+        }
+        var file = new OpenFileDialog
+        {
+            Filter = "Images compatibles (*.png;*.jpg;*.jpeg;*.webp;*.svg)|*.png;*.jpg;*.jpeg;*.webp;*.svg|PNG (*.png)|*.png|JPEG (*.jpg;*.jpeg)|*.jpg;*.jpeg|WebP (*.webp)|*.webp|SVG (*.svg)|*.svg",
+            CheckFileExists = true,
+            Title = "Choisir le logo ou l’image"
+        };
+        if (file.ShowDialog() != true) return;
+
+        var proposalIndex = SelectedProposalIndex();
+        if (proposalIndex < 0) proposalIndex = 0;
+        var proposalsBeforePreview = _proposals;
+        var selectedBeforePreview = _selected;
+        var documentBeforePreview = _doc;
+        string? preparedImage = null;
+        CancellationTokenSource? previewCancellation = null;
+        var previewRevision = 0;
+        PatternWindow? editor = null;
+        LogoAsset? asset = null;
+        try
+        {
+            var options = new ImageImportOptionsWindow(file.FileName) { Owner = this };
+            if (options.ShowDialog() != true) return;
+            preparedImage = options.PreparedImagePath ??
+                            throw new InvalidDataException("Le détourage n’a produit aucune image.");
+            var raster = new LogoImageImporter().Import(preparedImage);
+            asset = new LogoAsset
+            {
+                Name = Path.GetFileName(file.FileName),
+                Width = raster.Width,
+                Height = raster.Height,
+                SourceFormat = raster.SourceFormat,
+                Png = LogoImageImporter.EncodePng(raster)
+            };
+            var selectedObject = ObjectsList.SelectedItem as ModelObject ?? _doc.Objects.First();
+            var initial = new PatternSettings(
+                preparedImage,
+                PatternMode.Front,
+                TargetObject: selectedObject.Index,
+                FourVariants: false,
+                DisplayName: asset.Name,
+                MonochromeLogo: true,
+                LogoColorIndex: 0,
+                RepeatAcrossModel: false,
+                BackFacePreview: false);
+            editor = new PatternWindow(preparedImage, _doc.Objects, _selected.Colors, initial, asset.Name);
+            editor.PreviewRequested += PreviewLogo;
+            editor.PlacementModeChanged += armed =>
+            {
+                PatternGizmo.Visibility = armed ? Visibility.Collapsed : Visibility.Visible;
+                if (!armed) UpdatePatternGizmoProjection();
+            };
+            _activePatternEditor = editor;
+            PatternEditorHost.Content = editor;
+            SetPatternEditingUi(true);
+            bool accepted;
+            try { accepted = await editor.ShowEditorAsync(); }
+            finally
+            {
+                _activePatternEditor = null;
+                PatternEditorHost.Content = null;
+                SetPatternEditingUi(false);
+            }
+            Interlocked.Increment(ref previewRevision);
+            previewCancellation?.Cancel();
+            editor.PreviewRequested -= PreviewLogo;
+            _proposals = proposalsBeforePreview;
+            _selected = selectedBeforePreview;
+            RefreshBindings();
+            Render();
+            if (!accepted)
+            {
+                StatusText.Text = "Placement du logo annulé sans modifier le modèle.";
+                return;
+            }
+
+            var instance = LogoApplicationService.FromPattern(
+                asset.Id,
+                editor.Value,
+                Path.GetFileNameWithoutExtension(asset.Name),
+                editor.Value.LogoColorIndex);
+            var instances = editor.Value.Copies > 1
+                ? LogoProjector.Duplicate(instance, editor.Value.Copies,
+                    (float)(editor.Value.Spacing / 100 * Math.Max(.01, editor.Value.SurfaceWorldSize)),
+                    editor.Value.Alignment switch
+                    {
+                        PatternAlignment.Vertical => LogoRepeatMode.Vertical,
+                        PatternAlignment.Circular => LogoRepeatMode.Circular,
+                        _ => LogoRepeatMode.Horizontal
+                    })
+                : [instance];
+            var layer = new LogoLayer
+            {
+                Name = $"Logo · {Path.GetFileNameWithoutExtension(asset.Name)}",
+                Order = _logoProject.Layers.Count,
+                Instances = instances.ToList()
+            };
+            var nextProject = _logoProject with
+            {
+                Assets = [.. _logoProject.Assets, asset],
+                Layers = [.. _logoProject.Layers, layer]
+            };
+            var baseProposals = _logoBaseProposals ?? proposalsBeforePreview.Select(Clone).ToList();
+            PushUndo();
+            SetBusy(true, "Subdivision locale et application précise du logo…");
+            var result = await Task.Run(() =>
+                _logoApplication.Apply(documentBeforePreview, baseProposals, nextProject));
+            _doc = result.Document;
+            _logoProject = nextProject;
+            _logoBaseProposals = result.Bases.Select(Clone).ToList();
+            _layerBases = result.Bases.Select(Clone).ToList();
+            _proposals = result.Proposals;
+            _proposalLayers = result.Proposals.Select((proposal, index) =>
+            {
+                var logoLayer = CreateDifferenceLayer(
+                    layer.Name,
+                    ColorLayerKind.MonochromeLogo,
+                    result.Bases[index],
+                    proposal);
+                return new List<ColorLayer>
+                {
+                    _layerService.Create("Couleur de base", ColorLayerKind.BaseColor),
+                    logoLayer
+                };
+            }).ToList();
+            SetActivity(true, $"Optimisation de l’aperçu de {_doc.TriangleCount:N0} faces…");
+            await RebuildPreviewMeshesAsync(_doc);
+            SelectProposal(Math.Min(proposalIndex, _proposals.Count - 1));
+            RefreshBindings();
+            RefreshLayers();
+            RefreshLogoLayers();
+            Render();
+            _dirty = true;
+            StatusText.Text = result.AddedTriangles > 0
+                ? $"Logo appliqué · {result.AddedTriangles:N0} triangles ajoutés uniquement sous le motif."
+                : "Logo appliqué sans modifier les couleurs ni les motifs de fond.";
+        }
+        catch (OperationCanceledException)
+        {
+            _proposals = proposalsBeforePreview;
+            _selected = selectedBeforePreview;
+            Render();
+            StatusText.Text = "Calcul du logo annulé.";
+        }
+        catch (Exception ex)
+        {
+            _proposals = proposalsBeforePreview;
+            _selected = selectedBeforePreview;
+            Render();
+            MessageBox.Show(ex.Message, "Logo impossible à appliquer", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Le modèle n’a pas été modifié.";
+        }
+        finally
+        {
+            _activePatternEditor = null;
+            PatternEditorHost.Content = null;
+            SetPatternEditingUi(false);
+            previewCancellation?.Cancel();
+            previewCancellation?.Dispose();
+            SetBusy(false);
+            try { if (preparedImage is not null && File.Exists(preparedImage)) File.Delete(preparedImage); } catch { }
+        }
+
+        async void PreviewLogo(PatternSettings settings)
+        {
+            var revision = Interlocked.Increment(ref previewRevision);
+            var cancellation = new CancellationTokenSource();
+            var previous = Interlocked.Exchange(ref previewCancellation, cancellation);
+            previous?.Cancel();
+            previous?.Dispose();
+            try
+            {
+                if (!settings.HasSurfaceFrame)
+                {
+                    _proposals = proposalsBeforePreview;
+                    _selected = selectedBeforePreview;
+                    Render();
+                    editor?.SetPreviewStatus("Cliquez sur « Placer sur la pièce », puis sur la surface.");
+                    return;
+                }
+                if (asset is null) return;
+                var previewInstance = LogoApplicationService.FromPattern(
+                    asset.Id, settings, Path.GetFileNameWithoutExtension(asset.Name), settings.LogoColorIndex);
+                var previewProject = _logoProject with
+                {
+                    Assets = [.. _logoProject.Assets, asset],
+                    Layers =
+                    [
+                        .. _logoProject.Layers,
+                        new LogoLayer { Name = "Aperçu", Instances = [previewInstance], Order = _logoProject.Layers.Count }
+                    ]
+                };
+                var bases = _logoBaseProposals ?? proposalsBeforePreview;
+                var preview = await Task.Run(() =>
+                    _logoApplication.Preview(documentBeforePreview, bases, previewProject, cancellation.Token),
+                    cancellation.Token);
+                if (cancellation.IsCancellationRequested || revision != previewRevision) return;
+                _proposals = preview;
+                _selected = preview[Math.Min(proposalIndex, preview.Count - 1)];
+                Render();
+                editor?.SetPreviewStatus("Aperçu exact : le fond reste inchangé.");
+                StatusText.Text = "Aperçu du logo actualisé.";
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                if (revision == previewRevision) editor?.SetPreviewStatus(ex.Message, true);
+            }
+        }
+    }
+
+    async void LegacyImportPattern_Click(object sender, RoutedEventArgs e)
+    {
         if (!ImageImportModuleEnabled) return;
         if (_doc is null || _selected is null) { MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Motif image"); return; }
         if (_activePatternEditor is not null)
@@ -711,6 +937,28 @@ public partial class MainWindow : Window
 
     void RemovePattern_Click(object sender, RoutedEventArgs e)
     {
+        if (_logoProject.Layers.Count > 0 && _logoBaseProposals is { Count: > 0 })
+        {
+            PushUndo();
+            var logoSelectedIndex = SelectedProposalIndex();
+            _proposals = _logoBaseProposals.Select(Clone).ToList();
+            _layerBases = _proposals.Select(Clone).ToList();
+            _proposalLayers = _proposals.Select(_ => new List<ColorLayer>
+            {
+                _layerService.Create("Couleur de base", ColorLayerKind.BaseColor)
+            }).ToList();
+            _logoProject = new LogoProject();
+            _logoBaseProposals = null;
+            _pattern = null;
+            SelectProposal(Math.Clamp(logoSelectedIndex, 0, _proposals.Count - 1));
+            RefreshBindings();
+            RefreshLayers();
+            RefreshLogoLayers();
+            Render();
+            _dirty = true;
+            StatusText.Text = "Tous les logos ont été retirés. La coloration de fond est intacte.";
+            return;
+        }
         var selectedIndex = Math.Max(0, _proposals.IndexOf(_selected!));
         var selectedLayer = SelectedLayer();
         var pattern = selectedLayer?.Pattern ?? _pattern;
@@ -725,6 +973,224 @@ public partial class MainWindow : Window
         _pattern = _proposalLayers[selectedIndex].LastOrDefault(layer => layer.Pattern is not null)?.Pattern;
         SelectProposal(Math.Min(selectedIndex, _proposals.Count - 1)); RefreshBindings(); RefreshLayers(); RecenterView(); UpdatePatternText(); _dirty = true;
         StatusText.Text = removed > 0 ? "Motif sélectionné retiré. Les autres motifs sont conservés." : "Aucun motif correspondant n’a été trouvé.";
+    }
+
+    void RefreshLogoLayers()
+    {
+        if (LogoLayersList is null) return;
+        var selectedId = (LogoLayersList.SelectedItem as LogoInstance)?.Id;
+        LogoLayersList.ItemsSource = null;
+        LogoLayersList.ItemsSource = _logoProject.Layers
+            .OrderBy(layer => layer.Order)
+            .SelectMany(layer => layer.Instances.OrderBy(instance => instance.Order))
+            .ToList();
+        if (selectedId is Guid id)
+            LogoLayersList.SelectedItem = LogoLayersList.Items.Cast<LogoInstance>().FirstOrDefault(instance => instance.Id == id);
+    }
+
+    void LogoLayersList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LogoLayersList.SelectedItem is LogoInstance instance)
+            StatusText.Text = $"{instance.Name} sélectionné · objet {instance.Transform.Anchor.ObjectIndex + 1}.";
+    }
+
+    async void EditLogo_Click(object sender, RoutedEventArgs e)
+    {
+        if (LogoLayersList.SelectedItem is not LogoInstance selected || _doc is null || _selected is null) return;
+        var asset = _logoProject.Assets.FirstOrDefault(item => item.Id == selected.AssetId);
+        if (asset is null) return;
+        var temporary = Path.Combine(Path.GetTempPath(), $"PolyChrom-edit-{Guid.NewGuid():N}.png");
+        await File.WriteAllBytesAsync(temporary, asset.Png);
+        var current = PatternFromLogo(selected, temporary);
+        var editor = new PatternWindow(temporary, _doc.Objects, _selected.Colors, current, asset.Name);
+        var originalProject = CloneLogoProject(_logoProject);
+        var originalProposals = _proposals;
+        CancellationTokenSource? previewCancellation = null;
+        var revision = 0;
+        editor.PreviewRequested += Preview;
+        editor.PlacementModeChanged += armed => PatternGizmo.Visibility = armed ? Visibility.Collapsed : Visibility.Visible;
+        _activePatternEditor = editor;
+        PatternEditorHost.Content = editor;
+        SetPatternEditingUi(true);
+        try
+        {
+            var accepted = await editor.ShowEditorAsync();
+            Interlocked.Increment(ref revision);
+            previewCancellation?.Cancel();
+            _logoProject = originalProject;
+            _proposals = originalProposals;
+            _selected = _proposals[Math.Clamp(SelectedProposalIndex(), 0, _proposals.Count - 1)];
+            if (!accepted) { Render(); return; }
+            var replacement = LogoApplicationService.FromPattern(
+                selected.AssetId, editor.Value, selected.Name, editor.Value.LogoColorIndex) with
+            {
+                Id = selected.Id,
+                Order = selected.Order,
+                Visible = selected.Visible,
+                Locked = selected.Locked
+            };
+            PushUndo();
+            ReplaceLogo(selected.Id, replacement);
+            await ReapplyLogoProjectAsync("Logo modifié sans altérer le fond.");
+        }
+        catch (Exception ex)
+        {
+            _logoProject = originalProject;
+            _proposals = originalProposals;
+            Render();
+            MessageBox.Show(ex.Message, "Modification du logo", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _activePatternEditor = null;
+            PatternEditorHost.Content = null;
+            SetPatternEditingUi(false);
+            previewCancellation?.Cancel();
+            previewCancellation?.Dispose();
+            try { File.Delete(temporary); } catch { }
+        }
+
+        async void Preview(PatternSettings settings)
+        {
+            if (!settings.HasSurfaceFrame) return;
+            var currentRevision = Interlocked.Increment(ref revision);
+            var cancellation = new CancellationTokenSource();
+            var previous = Interlocked.Exchange(ref previewCancellation, cancellation);
+            previous?.Cancel();
+            previous?.Dispose();
+            try
+            {
+                var previewProject = CloneLogoProject(originalProject);
+                _logoProject = previewProject;
+                ReplaceLogo(selected.Id, LogoApplicationService.FromPattern(
+                    selected.AssetId, settings, selected.Name, settings.LogoColorIndex) with
+                {
+                    Id = selected.Id,
+                    Order = selected.Order
+                });
+                var bases = _logoBaseProposals ?? originalProposals;
+                var preview = await Task.Run(() => _logoApplication.Preview(_doc, bases, _logoProject, cancellation.Token), cancellation.Token);
+                if (cancellation.IsCancellationRequested || currentRevision != revision) return;
+                var selectedIndex = Math.Clamp(SelectedProposalIndex(), 0, preview.Count - 1);
+                _proposals = preview;
+                _selected = preview[selectedIndex];
+                Render();
+                editor.SetPreviewStatus("Aperçu exact de la modification.");
+            }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    async void DuplicateLogo_Click(object sender, RoutedEventArgs e)
+    {
+        if (LogoLayersList.SelectedItem is not LogoInstance selected) return;
+        var duplicate = LogoProjector.Duplicate(selected, 2, Math.Max(1, selected.Transform.WidthMm * .15f), LogoRepeatMode.Horizontal)[1];
+        PushUndo();
+        var layer = _logoProject.Layers.First(item => item.Instances.Any(instance => instance.Id == selected.Id));
+        layer.Instances.Add(duplicate);
+        await ReapplyLogoProjectAsync("Copie indépendante créée à côté du logo.");
+        LogoLayersList.SelectedItem = duplicate;
+    }
+
+    async void ToggleLogo_Click(object sender, RoutedEventArgs e)
+    {
+        if (LogoLayersList.SelectedItem is not LogoInstance selected) return;
+        PushUndo();
+        ReplaceLogo(selected.Id, selected with { Visible = !selected.Visible });
+        await ReapplyLogoProjectAsync(selected.Visible ? "Logo masqué." : "Logo affiché.");
+    }
+
+    async void DeleteLogo_Click(object sender, RoutedEventArgs e)
+    {
+        if (LogoLayersList.SelectedItem is not LogoInstance selected) return;
+        PushUndo();
+        foreach (var layer in _logoProject.Layers)
+            layer.Instances.RemoveAll(instance => instance.Id == selected.Id);
+        _logoProject.Layers.RemoveAll(layer => layer.Instances.Count == 0);
+        await ReapplyLogoProjectAsync("Logo supprimé. Les autres logos et le fond sont conservés.");
+    }
+
+    void ReplaceLogo(Guid id, LogoInstance replacement)
+    {
+        foreach (var layer in _logoProject.Layers)
+        {
+            var index = layer.Instances.FindIndex(instance => instance.Id == id);
+            if (index < 0) continue;
+            layer.Instances[index] = replacement;
+            return;
+        }
+        throw new InvalidDataException("Logo sélectionné introuvable.");
+    }
+
+    async Task ReapplyLogoProjectAsync(string status)
+    {
+        if (_doc is null || _logoBaseProposals is null) return;
+        SetActivity(true, "Actualisation des calques de logos…");
+        try
+        {
+            var selectedIndex = Math.Clamp(SelectedProposalIndex(), 0, _logoBaseProposals.Count - 1);
+            _proposals = await Task.Run(() => _logoApplication.Preview(_doc, _logoBaseProposals, _logoProject));
+            _layerBases = _logoBaseProposals.Select(Clone).ToList();
+            _proposalLayers = _proposals.Select((proposal, index) => new List<ColorLayer>
+            {
+                _layerService.Create("Couleur de base", ColorLayerKind.BaseColor),
+                CreateDifferenceLayer("Logos et images", ColorLayerKind.Image, _logoBaseProposals[index], proposal)
+            }).ToList();
+            SelectProposal(selectedIndex);
+            RefreshBindings();
+            RefreshLayers();
+            RefreshLogoLayers();
+            Render();
+            _dirty = true;
+            StatusText.Text = status;
+        }
+        finally { SetActivity(false); }
+    }
+
+    static PatternSettings PatternFromLogo(LogoInstance instance, string path)
+    {
+        var transform = instance.Transform;
+        var size = Math.Max(.01f, transform.WidthMm);
+        return new PatternSettings(
+            path,
+            transform.Projection switch
+            {
+                LogoProjectionMode.Cylindrical => PatternMode.Cylindrical,
+                LogoProjectionMode.Conformal => PatternMode.Triplanar,
+                _ => PatternMode.Front
+            },
+            100,
+            transform.RotationDegrees,
+            transform.OffsetUmm / size * 100,
+            -transform.OffsetVmm / size * 100,
+            transform.Anchor.ObjectIndex,
+            false,
+            DisplayName: instance.Name,
+            MonochromeLogo: !instance.UseImageColors,
+            LogoColorIndex: instance.FilamentIndex,
+            RepeatAcrossModel: false,
+            StretchX: 100,
+            StretchY: transform.HeightMm / size * 100,
+            MirrorX: transform.MirrorHorizontal,
+            MirrorY: transform.MirrorVertical,
+            BackFacePreview: false,
+            TiltX: transform.TiltXDegrees,
+            TiltY: transform.TiltYDegrees,
+            ReliefDepth: transform.ReliefMm,
+            HasSurfaceFrame: true,
+            SurfaceX: transform.Anchor.Position.X,
+            SurfaceY: transform.Anchor.Position.Y,
+            SurfaceZ: transform.Anchor.Position.Z,
+            SurfaceUx: transform.Anchor.Tangent.X,
+            SurfaceUy: transform.Anchor.Tangent.Y,
+            SurfaceUz: transform.Anchor.Tangent.Z,
+            SurfaceVx: transform.Anchor.Bitangent.X,
+            SurfaceVy: transform.Anchor.Bitangent.Y,
+            SurfaceVz: transform.Anchor.Bitangent.Z,
+            SurfaceNx: transform.Anchor.Normal.X,
+            SurfaceNy: transform.Anchor.Normal.Y,
+            SurfaceNz: transform.Anchor.Normal.Z,
+            SurfaceWorldSize: size);
     }
 
     static ColorProposal Rename(ColorProposal proposal, string name, string description) => new(name, description, proposal.Colors.Select(color => new PaletteColor(color.Name, color.Hex)).ToList(), new Dictionary<int, int>(proposal.Assignments)) { TriangleAssignments = proposal.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
@@ -1355,7 +1821,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
         try
         {
-            _projects.Save(dialog.FileName, _doc, _proposals, _proposals.IndexOf(_selected!), _yaw, _pitch, _zoom, _generation, _funMode, _colorCount, _pattern, _proposalLayers, _layerBases);
+            _projects.Save(dialog.FileName, _doc, _proposals, _proposals.IndexOf(_selected!), _yaw, _pitch, _zoom, _generation, _funMode, _colorCount, _pattern, _proposalLayers, _layerBases, _logoProject);
             _dirty = false; StatusText.Text = "Projet portable enregistré : modèle et styles sont réunis dans un seul fichier.";
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Projet impossible à enregistrer", MessageBoxButton.OK, MessageBoxImage.Error); }
@@ -1395,7 +1861,9 @@ public partial class MainWindow : Window
                     _proposals[p] = Rename(proposal, project.ProposalNames?.ElementAtOrDefault(p) ?? proposal.Name, project.ProposalDescriptions?.ElementAtOrDefault(p) ?? proposal.Description);
                 }
             }
-            _pattern = project.Pattern; UpdatePatternText();
+            _pattern = project.Pattern;
+            _logoProject = DecodeLogoProject(project.LogoArchive);
+            UpdatePatternText();
             if (project.Layers is not null && project.Layers.Count == _proposals.Count)
                 _proposalLayers = project.Layers.Select(group => group.Select(layer => layer.Duplicate(layer.Name) with { Id = layer.Id }).ToList()).ToList();
             else _proposalLayers = _proposals.Select(_ => new List<ColorLayer> { _layerService.Create("Couleur de base", ColorLayerKind.BaseColor) }).ToList();
@@ -1408,7 +1876,8 @@ public partial class MainWindow : Window
                     _layerBases[p].TriangleAssignments.Clear();
                     foreach (var pair in project.LayerBaseTriangles[p]) _layerBases[p].TriangleAssignments[pair.Key] = (int[])pair.Value.Clone();
                 }
-            _yaw = project.Yaw; _pitch = project.Pitch; _zoom = project.Zoom; SelectProposal(project.SelectedProposal); RefreshBindings(); Render(); _dirty = false;
+            _logoBaseProposals = _logoProject.Layers.Count > 0 ? _layerBases.Select(Clone).ToList() : null;
+            _yaw = project.Yaw; _pitch = project.Pitch; _zoom = project.Zoom; SelectProposal(project.SelectedProposal); RefreshBindings(); RefreshLogoLayers(); Render(); _dirty = false;
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Projet impossible à ouvrir", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
@@ -1416,16 +1885,16 @@ public partial class MainWindow : Window
     void New_Click(object sender, RoutedEventArgs e)
     {
         if (!ConfirmDiscard()) return;
-        _doc = null; _lastSlicerFile = null; _pattern = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); _previewMeshes.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _layerBases.Clear(); _proposalLayers.Clear(); RefreshLayers(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; SelectedObjectText.Text = "Aucun objet sélectionné"; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
+        _doc = null; _lastSlicerFile = null; _pattern = null; _logoProject = new LogoProject(); _logoBaseProposals = null; _paintSelection.Clear(); _triangleLookup.Clear(); _renderTriangleLookup.Clear(); _previewMeshes.Clear(); _undo.Clear(); _redo.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); _proposals.Clear(); _layerBases.Clear(); _proposalLayers.Clear(); RefreshLayers(); RefreshLogoLayers(); _selected = null; ObjectsList.ItemsSource = null; Proposals.ItemsSource = null; SelectedObjectText.Text = "Aucun objet sélectionné"; HintText.Visibility = Visibility.Visible; FileText.Text = "Aucun fichier chargé"; InfoText.Text = DimensionsText.Text = StatsText.Text = ""; ApplyButton.IsEnabled = false; OpenSlicerButton.IsEnabled = false; _dirty = false; Render();
     }
 
     bool ConfirmDiscard() => !_dirty || MessageBox.Show("Les modifications non enregistrées seront perdues. Continuer ?", "PolyChrom 3MF", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
 
     void PushUndo() { if (_proposals.Count == 0) return; _undo.Push(Capture()); _redo.Clear(); }
-    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList(), _pattern, _doc, _layerBases.Select(Clone).ToList(), CloneLayers(_proposalLayers));
+    EditorState Capture() => new(_proposals.IndexOf(_selected!), _generation, _funMode, _colorCount, _proposals.Select(Clone).ToList(), _pattern, _doc, _layerBases.Select(Clone).ToList(), CloneLayers(_proposalLayers), CloneLogoProject(_logoProject), _logoBaseProposals?.Select(Clone).ToList());
     static ColorProposal Clone(ColorProposal p) => new(p.Name, p.Description, p.Colors.Select(c => new PaletteColor(c.Name, c.Hex)).ToList(), new Dictionary<int, int>(p.Assignments)) { TriangleAssignments = p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone()) };
     static List<List<ColorLayer>> CloneLayers(IEnumerable<IEnumerable<ColorLayer>> groups) => groups.Select(group => group.Select(layer => layer.Duplicate(layer.Name) with { Id = layer.Id }).ToList()).ToList();
-    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _doc = state.Document; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); _layerBases = state.LayerBases.Select(Clone).ToList(); _proposalLayers = CloneLayers(state.Layers); SelectProposal(state.Selected); RefreshBindings(); ComputeBounds(); Render(); _dirty = true; }
+    void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _doc = state.Document; _logoProject = CloneLogoProject(state.Logos); _logoBaseProposals = state.LogoBases?.Select(Clone).ToList(); _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); _layerBases = state.LayerBases.Select(Clone).ToList(); _proposalLayers = CloneLayers(state.Layers); SelectProposal(state.Selected); RefreshBindings(); ComputeBounds(); Render(); _dirty = true; }
     void Undo_Click(object sender, RoutedEventArgs e) { if (_undo.Count == 0) return; _redo.Push(Capture()); Restore(_undo.Pop()); StatusText.Text = "Modification annulée."; }
     void Redo_Click(object sender, RoutedEventArgs e) { if (_redo.Count == 0) return; _undo.Push(Capture()); Restore(_redo.Pop()); StatusText.Text = "Modification rétablie."; }
     void RefreshBindings() { Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals; ObjectColorCombo.ItemsSource = null; ObjectColorCombo.ItemsSource = _selected?.Colors; PaintColorCombo.ItemsSource = null; PaintColorCombo.ItemsSource = _selected?.Colors; if (_selected is not null && _selected.Colors.Count > 0) PaintColorCombo.SelectedIndex = 0; }
@@ -2686,5 +3155,35 @@ public partial class MainWindow : Window
     void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; if (!e.Cancel) _gpuViewport.Dispose(); }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 
-    sealed record EditorState(int Selected, int Generation, bool FunMode, int ColorCount, List<ColorProposal> Proposals, PatternSettings? Pattern, ModelDocument? Document, List<ColorProposal> LayerBases, List<List<ColorLayer>> Layers);
+    static LogoProject DecodeLogoProject(byte[]? archive)
+    {
+        if (archive is not { Length: > 0 }) return new LogoProject();
+        using var stream = new MemoryStream(archive, writable: false);
+        return new LogoProjectStore().Load(stream);
+    }
+
+    static LogoProject CloneLogoProject(LogoProject source) => source with
+    {
+        Assets = source.Assets.Select(asset => asset with { Png = (byte[])asset.Png.Clone() }).ToList(),
+        Layers = source.Layers.Select(layer => layer with
+        {
+            Instances = layer.Instances.Select(instance => instance with
+            {
+                Transform = instance.Transform with { Anchor = instance.Transform.Anchor with { } }
+            }).ToList()
+        }).ToList()
+    };
+
+    sealed record EditorState(
+        int Selected,
+        int Generation,
+        bool FunMode,
+        int ColorCount,
+        List<ColorProposal> Proposals,
+        PatternSettings? Pattern,
+        ModelDocument? Document,
+        List<ColorProposal> LayerBases,
+        List<List<ColorLayer>> Layers,
+        LogoProject Logos,
+        List<ColorProposal>? LogoBases);
 }

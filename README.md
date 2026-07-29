@@ -1,4 +1,4 @@
-# PolyChrom 3MF 2.0.15
+# PolyChrom 3MF 2.1.0
 
 Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un aperçu solide optimisé pour les très gros modèles.
 
@@ -37,15 +37,18 @@ Application Windows française et locale pour colorer, personnaliser et prépare
 - Assistant d’export lisant les profils réellement installés de Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer : machine, processus, buse, nombre d’emplacements, matériaux, couleurs et filaments sont mémorisables dans plusieurs profils réutilisables.
 - Les métadonnées privées d’un ancien slicer sont remplacées à l’export afin qu’un projet Bambu, par exemple, puisse être rouvert avec le profil Snapmaker choisi sans conserver par erreur la X1 Carbon d’origine.
 - Galerie portable `.polystyle` et mode débutant.
-
-> Le module expérimental d’importation et de placement d’images/logos a été retiré de la version 2.0.15. Il sera réintroduit uniquement après reconstruction et validation complète.
+- Module de logos reconstruit et isolé : import PNG, JPG, JPEG, WebP et SVG, transparence conservée, suppression du fond relié aux bords ou de la couleur dominante, gomme et restauration manuelles.
+- Placement non destructif sur une surface plane, cylindrique ou courbe avec aperçu, taille libre, rotation, inclinaison, miroirs, relief local et duplication espacée horizontale, verticale ou circulaire.
+- Chaque occurrence reste indépendante dans le panneau **Logos et images** : modification, duplication, visibilité et suppression n’altèrent jamais les couleurs de fond.
+- Les projets `.poly3mf` embarquent les images normalisées, les calques, les ancrages et les transformations afin de restituer le même résultat sur un autre PC.
+- Export 3MF en flux continu et validation géométrique sans seconde copie du maillage en mémoire, vérifiés sur des modèles de 2,98 et 9,58 millions de triangles.
 
 ## Compilation
 
 ```powershell
 dotnet build PolyChrom3MF.sln -c Release
 dotnet test PolyChrom3MF.sln -c Release
-dotnet publish PolyChrom3MF.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish PolyChrom3MF.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false
 ISCC.exe installer.iss
 ```
 

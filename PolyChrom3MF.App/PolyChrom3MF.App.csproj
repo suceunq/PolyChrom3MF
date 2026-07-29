@@ -8,9 +8,14 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>PolyChrom3MF</AssemblyName>
-    <Version>2.0.15</Version>
+    <Version>2.1.0</Version>
     <Authors>bob59</Authors>
     <ApplicationIcon>Assets\PolyChrom.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,5 +26,16 @@
   <ItemGroup>
     <PackageReference Include="HelixToolkit.Wpf.SharpDX" Version="3.1.2" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PolyChrom3MF.Logos\PolyChrom3MF.Logos.csproj" />
+  </ItemGroup>
+
+  <Target Name="RemovePublishedSymbols" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishedSymbols Include="$(PublishDir)**\*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(PublishedSymbols)" />
+  </Target>
 
 </Project>

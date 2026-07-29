@@ -4,14 +4,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using PolyChrom3MF.Logos;
 
 namespace PolyChrom3MF.App;
 
-public sealed record ProjectData(string SourcePath, int SelectedProposal, List<List<string>> Proposals, List<Dictionary<int,int>> Assignments, double Yaw, double Pitch, double Zoom, int Generation, bool FunMode = false, int ColorCount = 4, List<Dictionary<int, int[]>>? TriangleAssignments = null, PatternSettings? Pattern = null, List<string>? ProposalNames = null, List<string>? ProposalDescriptions = null, List<List<ColorLayer>>? Layers = null, List<Dictionary<int, int>>? LayerBaseAssignments = null, List<Dictionary<int, int[]>>? LayerBaseTriangles = null);
+public sealed record ProjectData(string SourcePath, int SelectedProposal, List<List<string>> Proposals, List<Dictionary<int,int>> Assignments, double Yaw, double Pitch, double Zoom, int Generation, bool FunMode = false, int ColorCount = 4, List<Dictionary<int, int[]>>? TriangleAssignments = null, PatternSettings? Pattern = null, List<string>? ProposalNames = null, List<string>? ProposalDescriptions = null, List<List<ColorLayer>>? Layers = null, List<Dictionary<int, int>>? LayerBaseAssignments = null, List<Dictionary<int, int[]>>? LayerBaseTriangles = null, byte[]? LogoArchive = null);
 
 public sealed class ProjectService
 {
-    public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null, IReadOnlyList<IReadOnlyList<ColorLayer>>? layers = null, IReadOnlyList<ColorProposal>? layerBases = null)
+    public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null, IReadOnlyList<IReadOnlyList<ColorLayer>>? layers = null, IReadOnlyList<ColorProposal>? layerBases = null, LogoProject? logoProject = null)
     {
         if (!File.Exists(document.Path)) throw new FileNotFoundException("Le modèle 3D source est introuvable.", document.Path);
         string? derivedSnapshot = null;
@@ -57,7 +58,14 @@ public sealed class ProjectService
         }).ToList()).ToList();
         var baseAssignments = layerBases?.Select(p => new Dictionary<int, int>(p.Assignments)).ToList();
         var baseTriangles = layerBases?.Select(p => p.TriangleAssignments.ToDictionary(pair => pair.Key, pair => (int[])pair.Value.Clone())).ToList();
-        var data = new ProjectData(modelEntryName, selected, proposals.Select(p => p.Colors.Select(c => c.Hex).ToList()).ToList(), proposals.Select(p => new Dictionary<int,int>(p.Assignments)).ToList(), yaw, pitch, zoom, generation, funMode, colorCount, triangleAssignments, storedPattern, proposals.Select(p => p.Name).ToList(), proposals.Select(p => p.Description).ToList(), storedLayers, baseAssignments, baseTriangles);
+        byte[]? logoArchive = null;
+        if (logoProject is { Layers.Count: > 0 })
+        {
+            using var logoStream = new MemoryStream();
+            new LogoProjectStore().Save(logoStream, logoProject);
+            logoArchive = logoStream.ToArray();
+        }
+        var data = new ProjectData(modelEntryName, selected, proposals.Select(p => p.Colors.Select(c => c.Hex).ToList()).ToList(), proposals.Select(p => new Dictionary<int,int>(p.Assignments)).ToList(), yaw, pitch, zoom, generation, funMode, colorCount, triangleAssignments, storedPattern, proposals.Select(p => p.Name).ToList(), proposals.Select(p => p.Description).ToList(), storedLayers, baseAssignments, baseTriangles, logoArchive);
         Validate(data);
 
         var fullPath = Path.GetFullPath(path);
@@ -207,6 +215,13 @@ public sealed class ProjectService
                 foreach (var pair in assignments)
                     if (!objects.TryGetValue(pair.Key, out var obj) || pair.Value.Length != obj.Triangles.Count)
                         throw new InvalidDataException("La base des calques ne correspond pas au modèle intégré.");
+        if (data.LogoArchive is { Length: > 0 })
+        {
+            using var stream = new MemoryStream(data.LogoArchive, writable: false);
+            var logos = new LogoProjectStore().Load(stream);
+            if (logos.Instances.Any(instance => !objects.ContainsKey(instance.Transform.Anchor.ObjectIndex)))
+                throw new InvalidDataException("Un logo cible un objet absent du modèle intégré.");
+        }
     }
 
     static void Validate(ProjectData data)
@@ -214,6 +229,11 @@ public sealed class ProjectService
         if (data is null || string.IsNullOrWhiteSpace(data.SourcePath) || data.Proposals is null || data.Assignments is null || data.Proposals.Count is < 1 or > 4 || data.Assignments.Count > 4 || data.TriangleAssignments?.Count > 4 || data.SelectedProposal < 0 || data.SelectedProposal >= data.Proposals.Count || data.ColorCount is < 2 or > 32 || !double.IsFinite(data.Yaw) || !double.IsFinite(data.Pitch) || !double.IsFinite(data.Zoom) || data.Zoom <= 0)
             throw new InvalidDataException("Le projet contient des paramètres invalides.");
         if (data.Pattern is not null) PatternService.ValidateSettings(data.Pattern);
+        if (data.LogoArchive is { Length: > 0 })
+        {
+            using var stream = new MemoryStream(data.LogoArchive, writable: false);
+            _ = new LogoProjectStore().Load(stream);
+        }
         if (data.Layers?.Count > 4 || data.LayerBaseAssignments?.Count > 4 || data.LayerBaseTriangles?.Count > 4)
             throw new InvalidDataException("Le projet contient trop de groupes de calques.");
         if (data.ProposalNames is not null && data.ProposalNames.Count != data.Proposals.Count || data.ProposalDescriptions is not null && data.ProposalDescriptions.Count != data.Proposals.Count) throw new InvalidDataException("Les noms des propositions sont invalides.");

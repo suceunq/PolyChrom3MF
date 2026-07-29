@@ -101,90 +101,35 @@ public sealed class ThreeMfService
         var workingDestination = Path.Combine(destinationFolder, $".{Path.GetFileNameWithoutExtension(fullDestination)}.{Guid.NewGuid():N}.tmp.3mf");
         try
         {
-        // Rebuild a self-contained production-extension package. Orca/Bambu/
-        // Snapmaker require each painted mesh to be a native 3MF part referenced
-        // by a parent object; standards-based readers still receive p1/p2/p3.
-        CreatePackage(workingDestination, document);
-        if (document.SourceFormat == "3MF" && File.Exists(document.Path))
-            CopySafePackageExtras(document.Path, workingDestination);
+            // Rebuild a self-contained production-extension package. Orca/Bambu/
+            // Snapmaker require each painted mesh to be a native 3MF part referenced
+            // by a parent object; standards-based readers still receive p1/p2/p3.
+            CreatePackage(workingDestination, document, proposal);
+            if (document.SourceFormat == "3MF" && File.Exists(document.Path))
+                CopySafePackageExtras(document.Path, workingDestination);
 
-        using (var zip = ZipFile.Open(workingDestination, ZipArchiveMode.Update))
-        {
-            var partNames = document.Objects.Select((_, index) => $"3D/Objects/object_{index + 1}.model").ToList();
-            for (var partIndex = 0; partIndex < partNames.Count; partIndex++)
+            using (var zip = ZipFile.Open(workingDestination, ZipArchiveMode.Update))
             {
-                var partName = partNames[partIndex];
-                var entry = FindEntry(zip, partName) ?? throw new InvalidDataException($"Fragment 3MF absent pendant l’export : {partName}");
-                var xml = LoadSecureXml(entry);
-                var matches = new List<ModelObject> { document.Objects[partIndex] };
-                var resources = xml.Root!.Element(Core + "resources") ?? new XElement(Core + "resources");
-                if (resources.Parent is null) xml.Root.AddFirst(resources);
-                AddSlicerPaintingMetadata(xml.Root);
-                resources.Elements(Core + "basematerials").Where(x => (string?)x.Attribute("id") == "999").Remove();
-                var materials = new XElement(Core + "basematerials", new XAttribute("id", "999"));
-                foreach (var color in proposal.Colors)
-                    materials.Add(new XElement(Core + "base", new XAttribute("name", color.Name), new XAttribute("displaycolor", color.Hex.ToUpperInvariant())));
-                resources.Add(materials);
-                foreach (var obj in xml.Descendants(Core + "object"))
-                {
-                    ModelObject? match;
-                    match = matches[0];
-                    if (match is null) continue;
-                    obj.SetAttributeValue("pid", "999");
-                    var objectColor = Math.Clamp(proposal.Assignments.GetValueOrDefault(match.Index, match.Index % proposal.Colors.Count), 0, proposal.Colors.Count - 1);
-                    obj.SetAttributeValue("pindex", objectColor);
-                    var triangleElements = obj.Element(Core + "mesh")?.Element(Core + "triangles")?.Elements(Core + "triangle").ToList() ?? [];
-                    proposal.TriangleAssignments.TryGetValue(match.Index, out var triangleColors);
-                    for (var triangleIndex = 0; triangleIndex < triangleElements.Count; triangleIndex++)
-                    {
-                        var colorIndex = triangleColors is not null && triangleIndex < triangleColors.Length
-                            ? Math.Clamp(triangleColors[triangleIndex], 0, proposal.Colors.Count - 1)
-                            : objectColor;
-                        var triangle = triangleElements[triangleIndex];
-                        triangle.SetAttributeValue("pid", "999");
-                        triangle.SetAttributeValue("p1", colorIndex);
-                        triangle.SetAttributeValue("p2", colorIndex);
-                        triangle.SetAttributeValue("p3", colorIndex);
-                        // PrusaSlicer, OrcaSlicer, Bambu Studio and their
-                        // derivatives intentionally ignore the standard
-                        // p1/p2/p3 color properties on import.  Their native
-                        // multi-material painting attribute is emitted in
-                        // parallel while the standard properties remain for
-                        // Cura and other standards-based readers.
-                        triangle.SetAttributeValue(Slic3rPe + "mmu_segmentation",
-                            colorIndex == 0 ? null : SlicerFilamentStates[colorIndex + 1]);
-                        // Snapmaker Orca's U1 fork reads the same serialized
-                        // facet state from an unqualified paint_color attribute
-                        // and expects it even for filament 1.
-                        triangle.SetAttributeValue("paint_color", SlicerFilamentStates[colorIndex + 1]);
-                    }
-                }
-                entry.Delete();
-                var replacement = zip.CreateEntry(partName, CompressionLevel.Optimal);
-                using var output = replacement.Open();
-                using var writer = XmlWriter.Create(output, SafeWriterSettings());
-                xml.Save(writer);
+                WriteSlicerProjectMetadata(zip, document, proposal, filamentMaterials, exportProfile);
             }
-            WriteSlicerProjectMetadata(zip, document, proposal, filamentMaterials, exportProfile);
-        }
 
-        var report = $"{document.Objects.Count} objets · {document.TriangleCount:N0} triangles · {proposal.Colors.Count} couleurs";
-        if (verify)
-        {
-            var reopened = Read(workingDestination);
-            if (reopened.Objects.Count != document.Objects.Count || reopened.TriangleCount != document.TriangleCount)
-                throw new InvalidDataException("La vérification après export a échoué : objets ou triangles différents.");
-            if (Math.Abs(reopened.SizeX - document.SizeX) > .0001 || Math.Abs(reopened.SizeY - document.SizeY) > .0001 || Math.Abs(reopened.SizeZ - document.SizeZ) > .0001)
-                throw new InvalidDataException("La vérification après export a échoué : dimensions différentes.");
-            if (reopened.ExistingColorCount < proposal.Colors.Count)
-                throw new InvalidDataException("La vérification après export a échoué : matériaux absents.");
-            ValidateExportProfile(workingDestination, proposal, exportProfile);
-            report = $"{reopened.Objects.Count} objets · {reopened.TriangleCount:N0} triangles · dimensions identiques · {proposal.Colors.Count} couleurs";
-            if (exportProfile is not null)
-                report += $" · profil {exportProfile.PrinterPreset} vérifié";
-        }
-        File.Move(workingDestination, fullDestination, true);
-        return report;
+            var report = $"{document.Objects.Count} objets · {document.TriangleCount:N0} triangles · {proposal.Colors.Count} couleurs";
+            if (verify)
+            {
+                var reopened = ValidateGeometryStreaming(workingDestination);
+                if (reopened.ObjectCount != document.Objects.Count || reopened.TriangleCount != document.TriangleCount)
+                    throw new InvalidDataException("La vérification après export a échoué : objets ou triangles différents.");
+                if (Math.Abs(reopened.SizeX - document.SizeX) > .0001 || Math.Abs(reopened.SizeY - document.SizeY) > .0001 || Math.Abs(reopened.SizeZ - document.SizeZ) > .0001)
+                    throw new InvalidDataException("La vérification après export a échoué : dimensions différentes.");
+                if (reopened.ColorCount < proposal.Colors.Count)
+                    throw new InvalidDataException("La vérification après export a échoué : matériaux absents.");
+                ValidateExportProfile(workingDestination, proposal, exportProfile);
+                report = $"{reopened.ObjectCount} objets · {reopened.TriangleCount:N0} triangles · dimensions identiques · {proposal.Colors.Count} couleurs";
+                if (exportProfile is not null)
+                    report += $" · profil {exportProfile.PrinterPreset} vérifié";
+            }
+            File.Move(workingDestination, fullDestination, true);
+            return report;
         }
         finally
         {
@@ -257,7 +202,7 @@ public sealed class ThreeMfService
                     mesh))));
     }
 
-    static void CreatePackage(string destination, ModelDocument document)
+    static void CreatePackage(string destination, ModelDocument document, ColorProposal proposal)
     {
         using var file = new FileStream(destination, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
         using var zip = new ZipArchive(file, ZipArchiveMode.Create);
@@ -271,7 +216,8 @@ public sealed class ThreeMfService
         var relationships = new XElement(rel + "Relationships");
         for (var objectIndex = 0; objectIndex < document.Objects.Count; objectIndex++)
         {
-            SaveEntry(zip, $"3D/Objects/object_{objectIndex + 1}.model", BuildMeshModel(document.Objects[objectIndex], objectIndex * 2 + 1));
+            SaveMeshEntry(zip, $"3D/Objects/object_{objectIndex + 1}.model",
+                document.Objects[objectIndex], objectIndex * 2 + 1, proposal);
             relationships.Add(new XElement(rel + "Relationship",
                 new XAttribute("Target", $"/3D/Objects/object_{objectIndex + 1}.model"),
                 new XAttribute("Id", $"rel-{objectIndex + 1}"),
@@ -279,6 +225,171 @@ public sealed class ThreeMfService
         }
         SaveEntry(zip, "3D/_rels/3dmodel.model.rels", new XDocument(relationships));
     }
+
+    static void SaveMeshEntry(
+        ZipArchive zip,
+        string name,
+        ModelObject modelObject,
+        int partId,
+        ColorProposal proposal)
+    {
+        const string production = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06";
+        const string bambuStudio = "http://schemas.bambulab.com/package/2021";
+        var entry = zip.CreateEntry(name, CompressionLevel.Optimal);
+        using var stream = entry.Open();
+        using var writer = XmlWriter.Create(stream, SafeWriterSettings());
+        writer.WriteStartDocument();
+        writer.WriteStartElement("model", Core.NamespaceName);
+        writer.WriteAttributeString("unit", "millimeter");
+        writer.WriteAttributeString("xml", "lang", "http://www.w3.org/XML/1998/namespace", "fr-FR");
+        writer.WriteAttributeString("xmlns", "p", null, production);
+        writer.WriteAttributeString("xmlns", "BambuStudio", null, bambuStudio);
+        writer.WriteAttributeString("xmlns", "slic3rpe", null, Slic3rPe.NamespaceName);
+        writer.WriteAttributeString("requiredextensions", "p");
+        WriteMetadata("BambuStudio:3mfVersion", "1");
+        WriteMetadata("slic3rpe:Version3mf", "1");
+        WriteMetadata("slic3rpe:MmPaintingVersion", "1");
+        writer.WriteStartElement("resources", Core.NamespaceName);
+        writer.WriteStartElement("basematerials", Core.NamespaceName);
+        writer.WriteAttributeString("id", "999");
+        foreach (var color in proposal.Colors)
+        {
+            writer.WriteStartElement("base", Core.NamespaceName);
+            writer.WriteAttributeString("name", color.Name);
+            writer.WriteAttributeString("displaycolor", color.Hex.ToUpperInvariant());
+            writer.WriteEndElement();
+        }
+        writer.WriteEndElement();
+
+        var objectColor = Math.Clamp(
+            proposal.Assignments.GetValueOrDefault(modelObject.Index, modelObject.Index % proposal.Colors.Count),
+            0, proposal.Colors.Count - 1);
+        writer.WriteStartElement("object", Core.NamespaceName);
+        writer.WriteAttributeString("id", partId.ToString(CultureInfo.InvariantCulture));
+        writer.WriteAttributeString("p", "UUID", production,
+            $"{(partId + 1) / 2:D4}0000-81cb-4c03-9d28-80fed5dfa1dc");
+        writer.WriteAttributeString("type", "model");
+        writer.WriteAttributeString("pid", "999");
+        writer.WriteAttributeString("pindex", objectColor.ToString(CultureInfo.InvariantCulture));
+        writer.WriteStartElement("mesh", Core.NamespaceName);
+        writer.WriteStartElement("vertices", Core.NamespaceName);
+        foreach (var vertex in modelObject.Vertices)
+        {
+            writer.WriteStartElement("vertex", Core.NamespaceName);
+            writer.WriteAttributeString("x", vertex.X.ToString("R", CultureInfo.InvariantCulture));
+            writer.WriteAttributeString("y", vertex.Y.ToString("R", CultureInfo.InvariantCulture));
+            writer.WriteAttributeString("z", vertex.Z.ToString("R", CultureInfo.InvariantCulture));
+            writer.WriteEndElement();
+        }
+        writer.WriteEndElement();
+        writer.WriteStartElement("triangles", Core.NamespaceName);
+        proposal.TriangleAssignments.TryGetValue(modelObject.Index, out var triangleColors);
+        for (var triangleIndex = 0; triangleIndex < modelObject.Triangles.Count; triangleIndex++)
+        {
+            var triangle = modelObject.Triangles[triangleIndex];
+            var colorIndex = triangleColors is not null && triangleIndex < triangleColors.Length
+                ? Math.Clamp(triangleColors[triangleIndex], 0, proposal.Colors.Count - 1)
+                : objectColor;
+            var colorText = colorIndex.ToString(CultureInfo.InvariantCulture);
+            writer.WriteStartElement("triangle", Core.NamespaceName);
+            writer.WriteAttributeString("v1", triangle.A.ToString(CultureInfo.InvariantCulture));
+            writer.WriteAttributeString("v2", triangle.B.ToString(CultureInfo.InvariantCulture));
+            writer.WriteAttributeString("v3", triangle.C.ToString(CultureInfo.InvariantCulture));
+            writer.WriteAttributeString("pid", "999");
+            writer.WriteAttributeString("p1", colorText);
+            writer.WriteAttributeString("p2", colorText);
+            writer.WriteAttributeString("p3", colorText);
+            if (colorIndex != 0)
+                writer.WriteAttributeString("slic3rpe", "mmu_segmentation", Slic3rPe.NamespaceName,
+                    SlicerFilamentStates[colorIndex + 1]);
+            writer.WriteAttributeString("paint_color", SlicerFilamentStates[colorIndex + 1]);
+            writer.WriteEndElement();
+        }
+        writer.WriteEndElement();
+        writer.WriteEndElement();
+        writer.WriteEndElement();
+        writer.WriteEndElement();
+        writer.WriteEndElement();
+        writer.WriteEndDocument();
+
+        void WriteMetadata(string key, string value)
+        {
+            writer.WriteStartElement("metadata", Core.NamespaceName);
+            writer.WriteAttributeString("name", key);
+            writer.WriteString(value);
+            writer.WriteEndElement();
+        }
+    }
+
+    static GeometryValidation ValidateGeometryStreaming(string path)
+    {
+        using var zip = ZipFile.OpenRead(path);
+        ValidateArchive(zip);
+        var entries = zip.Entries
+            .Where(entry => entry.FullName.StartsWith("3D/Objects/", StringComparison.OrdinalIgnoreCase) &&
+                            entry.FullName.EndsWith(".model", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => entry.FullName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (entries.Length == 0) throw new InvalidDataException("Aucun fragment de maillage dans le 3MF exporté.");
+
+        long triangleCount = 0;
+        var colors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var minX = double.PositiveInfinity;
+        var minY = double.PositiveInfinity;
+        var minZ = double.PositiveInfinity;
+        var maxX = double.NegativeInfinity;
+        var maxY = double.NegativeInfinity;
+        var maxZ = double.NegativeInfinity;
+        foreach (var entry in entries)
+        {
+            using var stream = entry.Open();
+            using var reader = XmlReader.Create(stream, new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                IgnoreComments = true,
+                IgnoreWhitespace = true
+            });
+            while (reader.Read())
+            {
+                if (reader.NodeType != XmlNodeType.Element) continue;
+                if (reader.LocalName == "vertex")
+                {
+                    var x = double.Parse(reader.GetAttribute("x") ?? "NaN", NumberStyles.Float, CultureInfo.InvariantCulture);
+                    var y = double.Parse(reader.GetAttribute("y") ?? "NaN", NumberStyles.Float, CultureInfo.InvariantCulture);
+                    var z = double.Parse(reader.GetAttribute("z") ?? "NaN", NumberStyles.Float, CultureInfo.InvariantCulture);
+                    if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z))
+                        throw new InvalidDataException("Sommet invalide dans le 3MF exporté.");
+                    minX = Math.Min(minX, x); minY = Math.Min(minY, y); minZ = Math.Min(minZ, z);
+                    maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y); maxZ = Math.Max(maxZ, z);
+                }
+                else if (reader.LocalName == "triangle")
+                {
+                    triangleCount++;
+                }
+                else if (reader.LocalName == "base" && reader.GetAttribute("displaycolor") is { Length: > 0 } color)
+                {
+                    colors.Add(color);
+                }
+            }
+        }
+        if (!double.IsFinite(minX)) throw new InvalidDataException("Aucun sommet dans le 3MF exporté.");
+        return new GeometryValidation(
+            entries.Length,
+            triangleCount,
+            colors.Count,
+            maxX - minX,
+            maxY - minY,
+            maxZ - minZ);
+    }
+
+    readonly record struct GeometryValidation(
+        int ObjectCount,
+        long TriangleCount,
+        int ColorCount,
+        double SizeX,
+        double SizeY,
+        double SizeZ);
 
     static void CopySafePackageExtras(string sourcePath, string destinationPath)
     {

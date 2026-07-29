@@ -13,9 +13,9 @@ public class ThreeMfTests
     const string Ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
 
     [Fact]
-    public void Version_stable_desactive_le_module_images_et_logos()
+    public void Nouveau_module_images_et_logos_est_active_apres_validation_du_noyau()
     {
-        Assert.False(MainWindow.ImageImportModuleAvailable);
+        Assert.True(MainWindow.ImageImportModuleAvailable);
     }
 
     static string Sample(int objectCount = 1, string unit = "millimeter", bool colors = false, bool components = false)
