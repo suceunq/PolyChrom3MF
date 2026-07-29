@@ -29,18 +29,19 @@ public sealed class LogoApplicationService
         LogoProjectStore.Validate(project);
 
         var sourceMeshes = ConvertMeshes(source.Objects);
-        var probe = _projector.Project(sourceMeshes, project, cancellationToken: cancellationToken);
+        // Select the complete rectangular footprint, including transparent
+        // holes. Otherwise a coarse source triangle can miss a thin letter
+        // before it ever gets a chance to be refined.
+        var probe = _projector.Project(
+            sourceMeshes,
+            project,
+            includeTransparentFootprint: true,
+            cancellationToken: cancellationToken);
         var selected = probe.Hits
             .GroupBy(hit => hit.ObjectIndex)
             .ToDictionary(group => group.Key, group => group.Select(hit => hit.TriangleIndex).ToHashSet());
         var selectedCount = selected.Values.Sum(set => set.Count);
-        var levels = source.TriangleCount switch
-        {
-            < 150_000 when selectedCount < 50_000 => 2,
-            < 1_200_000 when selectedCount < 250_000 => 1,
-            _ => 0
-        };
-        if (selectedCount == 0) levels = 0;
+        var levels = RefinementLevels(source.TriangleCount, selectedCount);
 
         var document = source;
         var mappings = source.Objects.ToDictionary(
@@ -98,6 +99,29 @@ public sealed class LogoApplicationService
             proposals,
             checked((int)Math.Min(int.MaxValue, document.TriangleCount - source.TriangleCount)),
             levels);
+    }
+
+    static int RefinementLevels(long sourceTriangleCount, int selectedTriangleCount)
+    {
+        if (selectedTriangleCount == 0) return 0;
+
+        // Spend the detail budget only below the stamp. A small logo on a
+        // coarse model may need 32–64 subdivisions along a source edge for
+        // letters and holes to survive conversion to printable triangles.
+        var refinedTriangleBudget = sourceTriangleCount switch
+        {
+            < 500_000 => 100_000L,
+            < 2_000_000 => 70_000L,
+            _ => 40_000L
+        };
+        var projected = (long)selectedTriangleCount;
+        var levels = 0;
+        while (levels < 6 && projected <= refinedTriangleBudget / 4)
+        {
+            projected *= 4;
+            levels++;
+        }
+        return levels;
     }
 
     static ModelDocument ApplyRelief(

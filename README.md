@@ -1,4 +1,4 @@
-# PolyChrom 3MF 2.1.0
+# PolyChrom 3MF 2.1.1
 
 Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un aperçu solide optimisé pour les très gros modèles.
 

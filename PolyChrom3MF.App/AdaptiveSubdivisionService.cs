@@ -22,7 +22,7 @@ public sealed class AdaptiveSubdivisionService
             return new SubdivisionResult(
                 source with { Vertices = [.. source.Vertices], Triangles = [.. source.Triangles] },
                 Enumerable.Range(0, source.Triangles.Count).ToArray());
-        if (levels is < 1 or > 4) throw new ArgumentOutOfRangeException(nameof(levels));
+        if (levels is < 1 or > 6) throw new ArgumentOutOfRangeException(nameof(levels));
         if (sourceTriangles.Any(index => index < 0 || index >= source.Triangles.Count))
             throw new ArgumentOutOfRangeException(nameof(sourceTriangles));
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.1
+
+- Aperçu fidèle du fichier transparent directement dans le cadre de placement 3D.
+- Conservation automatique du rapport largeur/hauteur d’origine des logos.
+- Correction de l’échantillonnage qui colorait auparavant tout un triangle lorsqu’un seul point touchait le motif.
+- Couverture moyenne des faces pour conserver des contours propres et éviter les bavures.
+- Subdivision locale adaptative jusqu’à six niveaux sous l’empreinte complète du logo, y compris autour des zones transparentes.
+- Préservation des lettres, trous et traits fins dans le modèle coloré et dans l’export 3MF.
+- Suppression du recalcul trompeur et saccadé du maillage pendant le déplacement : le fond reste visuellement stable.
+- Budget de subdivision adapté à la taille du modèle pour préserver les performances.
+- 126 tests automatisés réussis, dont de nouveaux tests de non-régression sur les motifs fins et les triangles partiellement couverts.
+
 ## 2.1.0
 
 - Reconstruction complète du module d’images et de logos dans une bibliothèque isolée et testable.

@@ -115,6 +115,44 @@ public sealed class LogoModuleTests
         Assert.True(result.Hits.Count < mesh.Triangles.Count);
     }
 
+    [Fact]
+    public void Un_seul_echantillon_opaque_ne_colore_plus_un_triangle_entier()
+    {
+        var raster = SolidRaster(17, 17, 255, 0, 0, 0);
+        Set(raster.Rgba, raster.Width, 8, 8, 255, 0, 0, 255);
+        var asset = new LogoAsset
+        {
+            Name = "point.png",
+            Width = raster.Width,
+            Height = raster.Height,
+            Png = LogoImageImporter.EncodePng(raster),
+            SourceFormat = LogoImageFormat.Png
+        };
+        var anchor = SurfaceAnchor.Create(0, 0, Vector3.Zero, Vector3.UnitZ, Vector3.UnitX);
+        var instance = new LogoInstance
+        {
+            AssetId = asset.Id,
+            Name = "Point",
+            Transform = new LogoTransform { Anchor = anchor, WidthMm = 10, HeightMm = 10 }
+        };
+        var project = new LogoProject
+        {
+            Assets = [asset],
+            Layers = [new LogoLayer { Name = "Point", Instances = [instance] }]
+        };
+        var mesh = new LogoMeshObject(
+            0,
+            [new(-5, -5, 0), new(5, -5, 0), new(0, 5, 0)],
+            [new(0, 1, 2)]);
+
+        Assert.Empty(new LogoProjector().Project([mesh], project).Hits);
+        Assert.Single(new LogoProjector().Project(
+            [mesh],
+            project,
+            alphaThreshold: 128,
+            includeTransparentFootprint: true).Hits);
+    }
+
     [Theory]
     [InlineData(LogoProjectionMode.Plane)]
     [InlineData(LogoProjectionMode.Cylindrical)]
@@ -295,6 +333,63 @@ public sealed class LogoModuleTests
 
 public sealed class LogoApplicationIntegrationTests
 {
+    [Fact]
+    public void Subdivision_locale_reproduit_un_trait_fin_sans_elargir_toute_la_face()
+    {
+        var document = DocumentGrid(2, 2);
+        var basis = Proposal(document, 2);
+        var bytes = new byte[32 * 32 * 4];
+        for (var y = 0; y < 32; y++)
+            for (var x = 14; x <= 17; x++)
+            {
+                var offset = (y * 32 + x) * 4;
+                bytes[offset] = 255;
+                bytes[offset + 3] = 255;
+            }
+        var raster = new LogoRaster(32, 32, bytes, LogoImageFormat.Png, "trait-fin.png");
+        var asset = new LogoAsset
+        {
+            Name = "trait-fin.png",
+            Width = raster.Width,
+            Height = raster.Height,
+            Png = LogoImageImporter.EncodePng(raster),
+            SourceFormat = raster.SourceFormat
+        };
+        var anchor = SurfaceAnchor.Create(0, 0, Vector3.Zero, Vector3.UnitZ, Vector3.UnitX);
+        var instance = new LogoInstance
+        {
+            AssetId = asset.Id,
+            Name = "Trait fin",
+            FilamentIndex = 1,
+            Transform = new LogoTransform { Anchor = anchor, WidthMm = 2, HeightMm = 2 }
+        };
+        var project = new LogoProject
+        {
+            Assets = [asset],
+            Layers = [new LogoLayer { Name = "Trait fin", Instances = [instance] }]
+        };
+
+        var result = new PolyChrom3MF.App.LogoApplicationService().Apply(document, [basis], project);
+        Assert.True(result.SubdivisionLevels >= 5);
+        var obj = result.Document.Objects[0];
+        var colors = result.Proposals[0].TriangleAssignments[0];
+        var coloredCenters = obj.Triangles
+            .Select((triangle, index) => (triangle, index))
+            .Where(item => colors[item.index] == 1)
+            .Select(item =>
+            {
+                var a = obj.Vertices[item.triangle.A];
+                var b = obj.Vertices[item.triangle.B];
+                var c = obj.Vertices[item.triangle.C];
+                return (a.X + b.X + c.X) / 3;
+            })
+            .ToArray();
+
+        Assert.NotEmpty(coloredCenters);
+        Assert.All(coloredCenters, x => Assert.InRange(x, -.2, .2));
+        Assert.Contains(colors, color => color == 0);
+    }
+
     [Fact]
     public void Application_du_logo_ne_modifie_pas_la_coloration_hors_empreinte()
     {
