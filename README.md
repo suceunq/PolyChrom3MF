@@ -1,4 +1,4 @@
-# PolyChrom 3MF 2.0.13
+# PolyChrom 3MF 2.0.15
 
 Application Windows française et locale pour colorer, personnaliser et préparer des fichiers 3MF ou STL multicolores. PolyChrom 2 introduit la subdivision locale non destructive, les calques, la sélection intelligente, l’assistant d’impression et un aperçu solide optimisé pour les très gros modèles.
 
@@ -10,8 +10,6 @@ Application Windows française et locale pour colorer, personnaliser et prépare
 ## Fonctions
 
 - Import 3MF et STL (ASCII ou binaire) par boîte de dialogue ou glisser-déposer.
-- Import de plusieurs motifs PNG/JPG indépendants avec transparence, taille, rotation, décalage et ciblage propre à chaque objet ou à toute la figurine.
-- Quatre projections PNG imprimables : frontale, cylindrique, répétée et triplanaire, automatiquement réduites vers la palette de filaments.
 - Coloration manuelle cumulative d’une face précise ou de zones de plusieurs tailles avant application de la couleur choisie.
 - Prise en charge des conteneurs 3MF multiparties utilisant l’extension Production.
 - Analyse sécurisée ZIP/XML des objets, composants, unités et matériaux.
@@ -29,17 +27,18 @@ Application Windows française et locale pour colorer, personnaliser et prépare
 - Détection automatique des nouvelles versions au démarrage, téléchargement vérifié avec barre de progression, installation silencieuse et redémarrage automatique.
 - Fenêtre « À propos » créditant 3D TER avec un lien TikTok cliquable.
 - Fenêtre de bienvenue facultative et lien de soutien PayPal sécurisé accessible depuis le menu Aide.
-- Annuler/rétablir et projets portables `.poly3mf` réunissant dans un fichier partageable le modèle 3D, les propositions, les palettes, le PNG intégré, ses réglages et la vue exacte.
+- Annuler/rétablir et projets portables `.poly3mf` réunissant dans un fichier partageable le modèle 3D, les propositions, les palettes et la vue exacte.
 - Ouverture des projets `.poly3mf` par double-clic, glisser-déposer ou menu Fichier, avec compatibilité des anciens projets.
 - Export 3MF standard `basematerials`, géométrie source préservée et validation par réouverture.
-- Subdivision adaptative limitée aux contours des motifs, textes, logos et zones peintes.
-- Calques non destructifs : visibilité, verrouillage, ordre, renommage, duplication, fusion, texte et effets.
+- Calques non destructifs : visibilité, verrouillage, ordre, renommage, duplication, fusion et effets.
 - Sélection par îlot, angle, couleur, caméra, pièce, rectangle, lasso et régions sémantiques assistées.
 - Aperçu WPF solide avec cache, LOD automatique et maillage allégé pour les très gros modèles.
-- Recentrage automatique après import, coloration, texte, logo ou motif.
+- Recentrage automatique après import et coloration.
 - Assistant d’export lisant les profils réellement installés de Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer : machine, processus, buse, nombre d’emplacements, matériaux, couleurs et filaments sont mémorisables dans plusieurs profils réutilisables.
 - Les métadonnées privées d’un ancien slicer sont remplacées à l’export afin qu’un projet Bambu, par exemple, puisse être rouvert avec le profil Snapmaker choisi sans conserver par erreur la X1 Carbon d’origine.
-- Galerie portable `.polystyle`, mode débutant et transformation directe des motifs dans la vue.
+- Galerie portable `.polystyle` et mode débutant.
+
+> Le module expérimental d’importation et de placement d’images/logos a été retiré de la version 2.0.15. Il sera réintroduit uniquement après reconstruction et validation complète.
 
 ## Compilation
 

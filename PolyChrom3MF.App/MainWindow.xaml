@@ -17,7 +17,6 @@
         <Separator/><MenuItem Header="_Quitter" Click="Quit_Click"/>
       </MenuItem>
       <MenuItem Header="_Édition"><MenuItem Header="_Annuler" Click="Undo_Click" InputGestureText="Ctrl+Z"/><MenuItem Header="_Rétablir" Click="Redo_Click" InputGestureText="Ctrl+Y"/><Separator/><MenuItem Header="_Paramètres…" Click="Settings_Click"/></MenuItem>
-      <MenuItem Header="_Motif"><MenuItem Header="_Importer une image PNG/JPG…" Click="ImportPattern_Click"/><MenuItem Header="_Retirer le motif" Click="RemovePattern_Click"/></MenuItem>
       <MenuItem Header="_Coloration"><MenuItem x:Name="PaintModeMenu" Header="_Sélectionner des zones" IsCheckable="True" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed"/><MenuItem Header="Appliquer la couleur aux zones" Click="ApplyPaintSelection_Click"/><MenuItem Header="Effacer la sélection" Click="ClearPaintSelection_Click"/><Separator/><MenuItem Header="Galerie de styles…" Click="StyleGallery_Click"/><MenuItem Header="Enregistrer le style actuel…" Click="SaveStyle_Click"/></MenuItem>
       <MenuItem Header="_Affichage"><MenuItem Header="Isométrique" Click="ViewIso_Click"/><MenuItem Header="Face" Click="ViewFront_Click"/><MenuItem Header="Arrière" Click="ViewBack_Click"/><MenuItem Header="Gauche" Click="ViewLeft_Click"/><MenuItem Header="Droite" Click="ViewRight_Click"/><MenuItem Header="Dessus" Click="ViewTop_Click"/><MenuItem Header="Dessous" Click="ViewBottom_Click"/><Separator/><MenuItem x:Name="PlateMenuItem" Header="Afficher le plateau" IsCheckable="True" Click="ToggleGrid_Click"/><MenuItem x:Name="InertiaMenuItem" Header="Inertie de navigation" IsCheckable="True" Click="ToggleInertia_Click"/><MenuItem Header="Perspective/orthographique" Click="TogglePerspective_Click"/></MenuItem>
       <MenuItem Header="_Aide"><MenuItem Header="Guide des fonctions" Click="HelpGuide_Click"/><MenuItem Header="Assistant de bienvenue" Click="Welcome_Click"/><MenuItem Header="Nouveautés de cette version" Click="WhatsNew_Click"/><MenuItem Header="Soutenir le projet via PayPal" Click="Donate_Click"/><MenuItem Header="Rechercher une mise à jour" Click="Update_Click"/><Separator/><MenuItem Header="À propos" Click="About_Click"/></MenuItem>
@@ -25,7 +24,7 @@
 
     <ToolBar x:Name="MainToolbar" DockPanel.Dock="Top" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
       <Button Click="BeginnerMode_Click">Mode débutant</Button><Button Click="Import_Click" ToolTip="Ouvrir un fichier 3MF ou STL">Importer 3MF/STL</Button><Button Click="SaveProject_Click">Enregistrer projet</Button><Button Click="Export_Click">Exporter 3MF</Button><Button x:Name="OpenSlicerButton" Click="OpenPreferredSlicer_Click" IsEnabled="False">Ouvrir dans mon slicer</Button>
-      <Separator/><Button Click="Undo_Click">Annuler</Button><Button Click="Redo_Click">Rétablir</Button><Separator/><Button Click="ImportPattern_Click" ToolTip="Projeter une image PNG ou JPG imprimable sur la figurine">Importer motif image</Button><Button Click="StyleGallery_Click">Galerie styles</Button><Button Click="ColorCount_Click">Nombre de couleurs</Button><Button Click="PrintAssistant_Click">Assistant impression</Button><Button Click="Regenerate_Click">Régénérer</Button><Button Click="Settings_Click">Paramètres</Button>
+      <Separator/><Button Click="Undo_Click">Annuler</Button><Button Click="Redo_Click">Rétablir</Button><Separator/><Button Click="StyleGallery_Click">Galerie styles</Button><Button Click="ColorCount_Click">Nombre de couleurs</Button><Button Click="PrintAssistant_Click">Assistant impression</Button><Button Click="Regenerate_Click">Régénérer</Button><Button Click="Settings_Click">Paramètres</Button>
     </ToolBar>
 
     <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
@@ -162,15 +161,13 @@
             <StackPanel>
               <TextBlock Text="CALQUES NON DESTRUCTIFS" FontWeight="Bold"/>
               <ListBox x:Name="LayersList" Height="120" Margin="0,7,0,6" DisplayMemberPath="Name"
-                       SelectionChanged="LayersList_SelectionChanged" MouseDoubleClick="LayersList_MouseDoubleClick"
-                       ToolTip="Double-cliquez sur un calque de motif pour modifier ses logos après validation."/>
+                       SelectionChanged="LayersList_SelectionChanged"
+                       ToolTip="Sélectionnez un calque pour gérer sa visibilité, son verrouillage et son ordre."/>
               <WrapPanel>
                 <Button Click="AddLayer_Click" Content="+ Calque"/>
                 <Button Click="DuplicateLayer_Click" Content="Dupliquer"/>
-                <Button Click="EditPatternLayer_Click" Content="Modifier motif…"/>
                 <Button Click="RenameLayer_Click" Content="Renommer"/>
                 <Button Click="MergeLayer_Click" Content="Fusionner"/>
-                <Button Click="TextLayer_Click" Content="Texte…"/>
                 <Button Click="EffectLayer_Click" Content="Effet"/>
                 <Button Click="DeleteLayer_Click" Content="Supprimer"/>
                 <Button Click="MoveLayerUp_Click" Content="Monter"/>
@@ -204,13 +201,7 @@
               <WrapPanel><Button Click="ApplyPaintSelection_Click" Content="Appliquer la couleur"/><Button Click="ClearPaintSelection_Click" Content="Effacer"/></WrapPanel>
             </StackPanel>
           </Border>
-          <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10">
-            <StackPanel>
-              <TextBlock Text="MOTIF IMAGE · PNG/JPG" FontWeight="Bold"/>
-              <TextBlock x:Name="PatternText" Text="Aucun motif importé" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,4,0,7"/>
-              <WrapPanel><Button Click="ImportPattern_Click" Content="Importer…"/><Button Click="RemovePattern_Click" Content="Retirer"/></WrapPanel>
-            </StackPanel>
-          </Border>
+          <TextBlock x:Name="PatternText" Visibility="Collapsed"/>
           <ItemsControl x:Name="Proposals">
             <ItemsControl.ItemTemplate><DataTemplate>
               <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10" MouseDown="Proposal_Click" Tag="{Binding}">
@@ -238,7 +229,7 @@
           <CheckBox x:Name="UseFilaments" Content="Utiliser uniquement mes couleurs de filament" Checked="Filaments_Changed" Unchecked="Filaments_Changed" Margin="0,3,0,8"/>
           <Button Click="ManageFilaments_Click" Content="Gérer mes couleurs de filament…" Margin="0,0,0,8"/>
           <Button x:Name="ApplyButton" Click="Apply_Click" Content="Appliquer cette proposition" IsEnabled="False" Height="40"/>
-          <TextBlock Text="La géométrie n’est jamais découpée : les motifs sont inscrits sur les triangles du maillage et exportés en vraies couleurs 3MF." TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" Margin="0,12,0,0" FontSize="12"/>
+          <TextBlock Text="Les couleurs sont inscrites sur les triangles du maillage et exportées en vraies couleurs 3MF." TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" Margin="0,12,0,0" FontSize="12"/>
         </StackPanel>
       </ScrollViewer>
       <Border x:Name="PatternEditorPanel"
