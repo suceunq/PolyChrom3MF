@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.15
+
+- Retrait complet des accès utilisateur au module expérimental d’importation et de placement d’images/logos.
+- Suppression des boutons, menus, transformations, édition de calques image et aide associée.
+- Les anciens projets restent lisibles et conservent leurs affectations de couleurs déjà enregistrées.
+- Les styles contenant un ancien motif appliquent uniquement leur palette dans cette version stable.
+- Conservation des fonctions stables : import 3MF/STL, palettes, peinture, calques, profils d’impression, projets et exports slicers.
+- Préparation d’une reconstruction isolée du module avant toute future réintégration.
+
 ## 2.0.13
 
 - Nouvel assistant d’export basé sur les profils réellement installés de Snapmaker Orca, OrcaSlicer, Bambu Studio et PrusaSlicer.

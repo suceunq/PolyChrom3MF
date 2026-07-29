@@ -24,9 +24,8 @@
       </StackPanel></ScrollViewer></TabItem>
       <TabItem Header="Calques et précision"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">
         <TextBlock Text="Travailler sans détruire le modèle" FontSize="20" FontWeight="Bold"/>
-        <TextBlock Text="Chaque peinture, image, logo, texte ou effet peut être conservé dans un calque. Les calques peuvent être masqués, verrouillés, renommés, dupliqués, réordonnés ou fusionnés. L’opacité ne concerne que l’aperçu : l’export conserve des couleurs de filament franches." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
-        <TextBlock Text="PolyChrom subdivise automatiquement uniquement les triangles situés sous les contours fins d’un motif, d’un texte ou d’une zone peinte. Le reste du modèle n’est pas alourdi." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
-        <TextBlock Text="La galerie .polystyle partage palettes, motifs, projections, types de calques et profil d’impression. Le projet .poly3mf reste le format complet qui inclut aussi la géométrie et toutes les sélections." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
+        <TextBlock Text="Chaque peinture, sélection ou effet peut être conservé dans un calque. Les calques peuvent être masqués, verrouillés, renommés, dupliqués, réordonnés ou fusionnés. L’opacité ne concerne que l’aperçu : l’export conserve des couleurs de filament franches." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+        <TextBlock Text="La galerie .polystyle partage les palettes, les types de calques et le profil d’impression. Le projet .poly3mf reste le format complet qui inclut aussi la géométrie et toutes les sélections." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
       </StackPanel></ScrollViewer></TabItem>
       <TabItem Header="Propositions"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">
         <TextBlock Text="Créer des styles multicolores" FontSize="20" FontWeight="Bold"/>
@@ -38,15 +37,9 @@
         <TextBlock Text="Activez Sélectionner des zones. L’outil Face par face sélectionne un triangle précis. L’outil Pinceau fluide permet de maintenir le clic gauche et de dessiner sur la surface avec cinq tailles." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
         <TextBlock Text="Dans ce mode, utilisez le clic droit pour faire tourner la figurine et la molette pour zoomer. Choisissez une couleur, sélectionnez une ou plusieurs zones, puis cliquez sur Appliquer la couleur." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
       </StackPanel></ScrollViewer></TabItem>
-      <TabItem Header="Images et motifs"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">
-        <TextBlock Text="Appliquer une image PNG ou JPG" FontSize="20" FontWeight="Bold"/>
-        <TextBlock Text="Importez une image PNG, JPG ou JPEG comme motif. Pour une photo JPG, vous pouvez conserver le fond ou demander sa suppression automatique locale avec une tolérance réglable. Activez Répéter le motif pour couvrir toute la pièce, y compris les modèles composés de nombreuses parties. Le mode Logo monochrome conserve uniquement la forme d’un symbole noir ou blanc, laisse le reste du modèle inchangé et permet de choisir sa couleur de filament. Utilisez Inverser pour un logo sombre sur fond clair." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
-        <TextBlock Text="Choisissez la cible, la projection, la taille, la rotation et les décalages. Quatre projections peuvent être créées : frontale, cylindrique, répétée et triplanaire. Les couleurs de l’image sont converties vers les couleurs de filament disponibles." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
-        <TextBlock Text="Conseil : un sujet contrasté sur un fond uni donne la suppression de fond la plus propre." TextWrapping="Wrap" Margin="0,12,0,0" FontWeight="SemiBold"/>
-      </StackPanel></ScrollViewer></TabItem>
       <TabItem Header="Projets et partage"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">
         <TextBlock Text="Sauvegarder et partager" FontSize="20" FontWeight="Bold"/>
-        <TextBlock Text="Enregistrer projet crée un fichier .poly3mf portable contenant le modèle, les propositions, les affectations par triangle, la vue et le motif image. Un autre utilisateur de PolyChrom 3MF peut l’ouvrir et retrouver le même travail." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+        <TextBlock Text="Enregistrer projet crée un fichier .poly3mf portable contenant le modèle, les propositions, les affectations par triangle et la vue. Un autre utilisateur de PolyChrom 3MF peut l’ouvrir et retrouver le même travail." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
         <TextBlock Text="Exporter 3MF produit le fichier coloré final. La géométrie n’est pas découpée : les couleurs imprimables sont inscrites dans le document 3MF." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
       </StackPanel></ScrollViewer></TabItem>
       <TabItem Header="Slicers et mises à jour"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">

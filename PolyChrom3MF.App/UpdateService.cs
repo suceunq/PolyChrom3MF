@@ -11,44 +11,12 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
-        "Placement libre des logos PNG/JPEG directement sur la surface choisie du modèle.\n" +
-        "Nouveau détourage avec suppression automatique ou manuelle du fond, gomme, restauration et aperçu transparent.\n" +
-        "Poignées visibles pour déplacer, redimensionner et tourner le logo sans recalcul pendant le glissement.\n" +
-        "Le clic droit ouvre maintenant un panneau sombre lisible pour dupliquer le logo 2, 4, 8 fois ou selon un nombre personnalisé.\n" +
-        "Les logos dupliqués peuvent être déplacés ensemble ou séparément.\n" +
-        "Chaque motif reste non destructif et peut être rouvert par le bouton « Modifier motif » ou par double-clic sur son calque.\n" +
-        "La projection locale suit précisément la surface cliquée et limite le motif à la zone du tampon.\n" +
-        "Navigation 3D modernisée : orbite libre, panoramique, zoom sous le curseur, pivot dynamique et plateau masqué par défaut.\n" +
-        "Correction des coordonnées de projection en perspective et amélioration de la fluidité sur les modèles volumineux.\n" +
-        "Nouvel atelier de placement des motifs PNG/JPEG intégré directement à la fenêtre principale.\n" +
-        "L’interface habituelle revient automatiquement après validation ou annulation.\n" +
-        "Navigation 3D inchangée : clic gauche pour tourner, clic droit pour déplacer et molette pour zoomer.\n" +
-        "L’aperçu est calculé en arrière-plan avec temporisation adaptative pour rester fluide sur les gros modèles.\n" +
-        "Le cache LOD est reconstruit après subdivision et la caméra est réutilisée pour fluidifier l’interface principale.\n" +
-        "Le bouton « Appliquer le motif » reste toujours visible et les commandes incompatibles sont temporairement protégées.\n" +
-        "Le bouton « Appliquer les filaments » reste maintenant toujours visible en bas de la fenêtre de gestion.\n" +
-        "La couture blanche des projections cylindriques et des motifs répétés est supprimée par une fusion périodique des bords.\n" +
-        "Les motifs monochromes triplanaires conservent leurs traits au changement d’axe au lieu de créer une bande claire.\n" +
-        "Les motifs répétés utilisent maintenant un raccord miroir continu, sans ligne de démarcation brutale.\n" +
-        "La projection triplanaire mélange les trois axes pour supprimer les coutures visibles entre les faces.\n" +
-        "L’échantillonnage bilinéaire améliore la netteté et la régularité des motifs PNG/JPG.\n" +
-        "La fenêtre « Gérer mes couleurs » permet de choisir de 2 à 32 filaments et de tous les régler en une seule fois.\n" +
-        "Chaque filament peut maintenant être défini en PLA ou PETG ; ce matériau est présélectionné dans les slicers compatibles.\n" +
-        "Correction Snapmaker Orca : les couleurs sont désormais exportées avec l’attribut paint_color attendu par le slicer U1.\n" +
-        "Les modèles colorés s’affichent réellement avec leurs filaments dans Snapmaker Orca au lieu d’apparaître entièrement bleus.\n" +
-        "L’export utilise maintenant une structure de projet 3MF native avec objets parents, volumes, relations et profils de filaments.\n" +
-        "Export multicolore compatible avec Snapmaker Orca, OrcaSlicer, PrusaSlicer et Bambu Studio.\n" +
-        "Les affectations de filaments sont enregistrées à la fois en propriétés 3MF standard et en peinture multimatériau native.\n" +
-        "Correction de l’export des modèles 3MF multiparties avec fragments manquants ou chemins non standard.\n" +
-        "Les exports sont reconstruits en package autonome lorsque nécessaire et s’ouvrent dans Snapmaker Orca.\n" +
-        "Le bouton « Ouvrir dans mon slicer » génère désormais la version colorée actuelle au lieu d’envoyer le fichier source original.\n" +
-        "Plusieurs motifs PNG/JPG indépendants peuvent maintenant coexister sur des objets différents.\n" +
-        "Chaque motif conserve sa cible, son image, son calque et ses réglages de transformation.\n" +
-        "Transformer ou retirer le calque actif ne modifie plus les autres motifs.\n" +
-        "Les projets .poly3mf embarquent et restaurent séparément toutes les images utilisées.\n" +
-        "L’objet sélectionné est clairement nommé et surligné dans la vue 3D.\n" +
-        "Le prochain motif cible automatiquement l’objet actuellement sélectionné.\n" +
-        "Correction du workflow GitHub de création automatique de l’installateur Windows.";
+        "Version de stabilisation 2.0.15.\n" +
+        "Le module expérimental d’importation et de placement d’images/logos est retiré de l’interface utilisateur.\n" +
+        "Les boutons, menus, transformations et raccourcis associés ne sont plus accessibles tant que le module reconstruit n’est pas validé.\n" +
+        "Les projets existants restent lisibles et conservent leurs couleurs déjà calculées.\n" +
+        "La coloration 3MF/STL, les calques, la peinture, les palettes, les profils d’impression et les exports slicers restent disponibles.\n" +
+        "La documentation a été alignée sur les fonctions réellement présentes dans cette version stable.";
 
     const string LatestReleaseApi = "https://api.github.com/repos/suceunq/PolyChrom3MF/releases/latest";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";

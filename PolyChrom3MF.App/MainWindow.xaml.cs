@@ -26,6 +26,11 @@ public partial class MainWindow : Window
     // The voxel LOD preserves the overall shape while avoiding camera lag.
     const long FullDetailTriangleLimit = 500_000;
     const int LargeModelPreviewTarget = 300_000;
+    // The legacy image/logo editor is intentionally unavailable in 2.0.15.
+    // Existing projects keep their baked triangle colours, but no entry point
+    // may execute the unstable placement pipeline in the user application.
+    static readonly bool ImageImportModuleEnabled = false;
+    internal static bool ImageImportModuleAvailable => ImageImportModuleEnabled;
     readonly ThreeMfService _service = new();
     readonly StlService _stlService = new();
     readonly PaletteService _palettes = new();
@@ -481,7 +486,7 @@ public partial class MainWindow : Window
             return;
         }
         SelectedObjectText.Text = $"✓ Objet sélectionné : {selectedObject}";
-        if (updateStatus) StatusText.Text = $"{selectedObject} sélectionné · les nouveaux motifs cibleront cet objet par défaut.";
+        if (updateStatus) StatusText.Text = $"{selectedObject} sélectionné.";
     }
 
     void Apply_Click(object sender, RoutedEventArgs e)
@@ -499,6 +504,7 @@ public partial class MainWindow : Window
 
     async void ImportPattern_Click(object sender, RoutedEventArgs e)
     {
+        if (!ImageImportModuleEnabled) return;
         if (_doc is null || _selected is null) { MessageBox.Show("Importez d’abord un modèle 3MF ou STL.", "Motif image"); return; }
         if (_activePatternEditor is not null)
         {
@@ -746,16 +752,13 @@ public partial class MainWindow : Window
     void UpdatePatternText()
     {
         if (PatternText is null) return;
-        var count = _proposalLayers.SelectMany(group => group).Where(layer => layer.Pattern is not null)
-            .Select(layer => layer.Pattern!.ImagePath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-        PatternText.Text = _pattern is null
-            ? "Aucun motif importé"
-            : $"{count} motif{(count > 1 ? "s" : "")} · actif : {(_pattern.DisplayName ?? Path.GetFileName(_pattern.ImagePath))} · {(_pattern.FourVariants ? "4 projections" : PatternModeName(_pattern.Mode))} · taille {_pattern.Scale:0}%";
-        if (PatternTransformPanel is not null) PatternTransformPanel.Visibility = _pattern is null ? Visibility.Collapsed : Visibility.Visible;
+        PatternText.Text = "";
+        if (PatternTransformPanel is not null) PatternTransformPanel.Visibility = Visibility.Collapsed;
     }
 
     async void PatternTransform_Click(object sender, RoutedEventArgs e)
     {
+        if (!ImageImportModuleEnabled) return;
         var selectedPatternLayer = SelectedLayer();
         var activePattern = selectedPatternLayer?.Pattern ?? _pattern;
         if (activePattern is null || _doc is null || sender is not FrameworkElement { Tag: string action }) return;
@@ -780,6 +783,7 @@ public partial class MainWindow : Window
 
     async void EditPatternLayer_Click(object sender, RoutedEventArgs e)
     {
+        if (!ImageImportModuleEnabled) return;
         var layer = SelectedLayer();
         if (_doc is null || _selected is null || layer?.Pattern is not { } current || layer.IsLocked) return;
         if (_activePatternEditor is not null) return;
@@ -852,6 +856,7 @@ public partial class MainWindow : Window
 
     void LayersList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
+        if (!ImageImportModuleEnabled) return;
         if (SelectedLayer()?.Pattern is null) return;
         EditPatternLayer_Click(sender, e);
         e.Handled = true;
@@ -918,6 +923,7 @@ public partial class MainWindow : Window
 
     async void TextLayer_Click(object sender, RoutedEventArgs e)
     {
+        if (!ImageImportModuleEnabled) return;
         if (_doc is null || _selected is null) return;
         var text = PromptText("Ajouter un calque de texte", "Texte à projeter", "PolyChrom");
         if (string.IsNullOrWhiteSpace(text)) return;
@@ -1513,7 +1519,7 @@ public partial class MainWindow : Window
         try
         {
             var proposal = SelectedProposalIndex();
-            var style = new PolyStyleData(_selected.Name, _selected.Description, _selected.Colors.Select(color => color.Hex).ToList(), _pattern,
+            var style = new PolyStyleData(_selected.Name, _selected.Description, _selected.Colors.Select(color => color.Hex).ToList(), null,
                 proposal >= 0 && proposal < _proposalLayers.Count ? _proposalLayers[proposal].Select(layer => layer.Kind).ToList() : [],
                 _settings.PrinterName, _settings.MaterialSlots, DateTimeOffset.UtcNow);
             _styleLibrary.Save(dialog.FileName, style);
@@ -1530,9 +1536,9 @@ public partial class MainWindow : Window
         await ApplyStyle(dialog.SelectedStyle);
     }
 
-    async Task ApplyStyle(PolyStyleData style)
+    Task ApplyStyle(PolyStyleData style)
     {
-        if (_doc is null || _selected is null) return;
+        if (_doc is null || _selected is null) return Task.CompletedTask;
         PushUndo();
         var proposalIndex = SelectedProposalIndex();
         _colorCount = style.Colors.Count;
@@ -1548,27 +1554,12 @@ public partial class MainWindow : Window
             _layerBases[proposalIndex].Colors.Clear();
             _layerBases[proposalIndex].Colors.AddRange(_selected.Colors.Select(color => new PaletteColor(color.Name, color.Hex)));
         }
-        if (style.Pattern is not null)
-        {
-            SetBusy(true, "Application du style et subdivision locale…");
-            try
-            {
-                var geometry = await Task.Run(() => _patternGeometryService.Build(_doc, _proposals, style.Pattern,
-                    Enumerable.Repeat(style.Pattern.Mode, _proposals.Count).ToArray(), targetProposals: new HashSet<int> { proposalIndex }));
-                _doc = geometry.Document; _proposals = geometry.Proposals; _pattern = style.Pattern;
-                await RebuildPreviewMeshesAsync(_doc);
-                _layerBases = geometry.BaseProposals.Select(Clone).ToList();
-                _proposalLayers = _proposals.Select((proposal, index) => new List<ColorLayer>
-                {
-                    _layerService.Create("Couleur de base", ColorLayerKind.BaseColor),
-                    CreateDifferenceLayer("Motif du style", ColorLayerKind.Image, _layerBases[index], proposal, style.Pattern)
-                }).ToList();
-            }
-            finally { SetBusy(false); }
-        }
         SelectProposal(proposalIndex); RefreshBindings(); RecenterView(); UpdatePatternText();
         ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS";
-        _dirty = true; StatusText.Text = $"Style « {style.Name} » appliqué.";
+        _dirty = true; StatusText.Text = style.Pattern is null
+            ? $"Style « {style.Name} » appliqué."
+            : $"Palette du style « {style.Name} » appliquée. Son ancien motif image a été ignoré dans cette version stable.";
+        return Task.CompletedTask;
     }
 
     internal static Dictionary<int, PreviewMesh> BuildPreviewMeshes(ModelDocument document)
