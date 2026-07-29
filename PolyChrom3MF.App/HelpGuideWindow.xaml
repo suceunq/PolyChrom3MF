@@ -37,6 +37,12 @@
         <TextBlock Text="Activez Sélectionner des zones. L’outil Face par face sélectionne un triangle précis. L’outil Pinceau fluide permet de maintenir le clic gauche et de dessiner sur la surface avec cinq tailles." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
         <TextBlock Text="Dans ce mode, utilisez le clic droit pour faire tourner la figurine et la molette pour zoomer. Choisissez une couleur, sélectionnez une ou plusieurs zones, puis cliquez sur Appliquer la couleur." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
       </StackPanel></ScrollViewer></TabItem>
+      <TabItem Header="Logos et images"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">
+        <TextBlock Text="Placer un logo sans altérer le fond" FontSize="20" FontWeight="Bold"/>
+        <TextBlock Text="Importez une image PNG, JPG, JPEG, WebP ou SVG. Le premier écran permet de conserver la transparence, de retirer automatiquement le fond relié aux bords, de supprimer une couleur dominante ou de corriger le masque avec la gomme et l’outil de restauration." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+        <TextBlock Text="Dans l’atelier 3D, cliquez sur Placer sur la pièce puis sur la surface voulue. Réglez la taille, la largeur, la hauteur, la rotation, l’inclinaison, les miroirs, le relief et la projection plane, cylindrique ou adaptée à la courbure. L’aperçu est recalculé depuis une copie intacte du fond." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
+        <TextBlock Text="Les copies horizontales, verticales ou circulaires sont des logos indépendants. Après validation, sélectionnez un logo dans le panneau droit pour le modifier, le dupliquer à côté, le masquer ou le supprimer. Enregistrer projet embarque l’image et toutes ses positions ; Exporter 3MF écrit les couleurs finales pour les slicers." TextWrapping="Wrap" Margin="0,12,0,0" LineHeight="22"/>
+      </StackPanel></ScrollViewer></TabItem>
       <TabItem Header="Projets et partage"><ScrollViewer><StackPanel Margin="20" TextElement.Foreground="#E2E7EF">
         <TextBlock Text="Sauvegarder et partager" FontSize="20" FontWeight="Bold"/>
         <TextBlock Text="Enregistrer projet crée un fichier .poly3mf portable contenant le modèle, les propositions, les affectations par triangle et la vue. Un autre utilisateur de PolyChrom 3MF peut l’ouvrir et retrouver le même travail." TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>

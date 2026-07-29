@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PolyChrom3MF.Tests", "PolyC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PolyChrom3MF.Cli", "PolyChrom3MF.Cli\PolyChrom3MF.Cli.csproj", "{35DBBC3E-CC61-4CDE-BCF6-B48B33F22DE9}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PolyChrom3MF.Logos", "PolyChrom3MF.Logos\PolyChrom3MF.Logos.csproj", "{C9A71A16-EE45-45F1-B6E9-4865B7AF61B4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 		{35DBBC3E-CC61-4CDE-BCF6-B48B33F22DE9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{35DBBC3E-CC61-4CDE-BCF6-B48B33F22DE9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{35DBBC3E-CC61-4CDE-BCF6-B48B33F22DE9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C9A71A16-EE45-45F1-B6E9-4865B7AF61B4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C9A71A16-EE45-45F1-B6E9-4865B7AF61B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C9A71A16-EE45-45F1-B6E9-4865B7AF61B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C9A71A16-EE45-45F1-B6E9-4865B7AF61B4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

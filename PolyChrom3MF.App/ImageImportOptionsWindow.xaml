@@ -29,7 +29,7 @@
             <TextBlock x:Name="ToleranceValue" DockPanel.Dock="Right" Text="42"/>
             <Slider x:Name="ToleranceSlider" Minimum="1" Maximum="160" Value="42" TickFrequency="5" ValueChanged="ToleranceChanged"/>
           </DockPanel>
-          <TextBlock Text="Une valeur élevée retire davantage de nuances proches du fond." Foreground="#98A5B8" FontSize="12" TextWrapping="Wrap"/>
+          <TextBlock Text="Une valeur élevée retire davantage de nuances proches du fond. PNG, JPG, JPEG, WebP et SVG sont acceptés." Foreground="#98A5B8" FontSize="12" TextWrapping="Wrap"/>
           <Separator Margin="0,16"/>
           <TextBlock Text="Correction manuelle" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <RadioButton x:Name="EraseTool" Content="Gomme — supprimer" IsChecked="True" Margin="4" Foreground="White"/>

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.0
+
+- Reconstruction complète du module d’images et de logos dans une bibliothèque isolée et testable.
+- Import PNG, JPG, JPEG, WebP et SVG avec transparence conservée et SVG nettoyé des contenus externes ou exécutables.
+- Détourage automatique du fond relié aux bords, suppression de la couleur dominante, tolérance, gomme et restauration.
+- Placement ancré sur le maillage avec projections plane, cylindrique et adaptée à la courbure.
+- Transformations non destructives : déplacement, taille libre, rotation, inclinaison, miroir, relief et répétitions espacées.
+- Instances indépendantes, modifiables, duplicables, masquables et supprimables sans modifier la coloration de fond.
+- Subdivision locale uniquement sous les logos lorsqu’elle apporte un gain de précision.
+- Sauvegarde des images, calques, ancrages et transformations dans les projets `.poly3mf`.
+- Export 3MF en flux continu avec couleurs standards et métadonnées de peinture des principaux slicers.
+- Validation réelle sur 2 983 116 et 9 585 474 triangles ; export du modèle extrême ramené à environ 33 secondes avec un pic d’environ 2 Go pendant l’export.
+- 124 tests automatisés réussis, incluant formats, sécurité SVG, images corrompues, annulation, surfaces courbes, mémoire, projets et export.
+
 ## 2.0.15
 
 - Retrait complet des accès utilisateur au module expérimental d’importation et de placement d’images/logos.

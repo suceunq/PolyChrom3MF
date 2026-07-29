@@ -18,13 +18,14 @@
       </MenuItem>
       <MenuItem Header="_Édition"><MenuItem Header="_Annuler" Click="Undo_Click" InputGestureText="Ctrl+Z"/><MenuItem Header="_Rétablir" Click="Redo_Click" InputGestureText="Ctrl+Y"/><Separator/><MenuItem Header="_Paramètres…" Click="Settings_Click"/></MenuItem>
       <MenuItem Header="_Coloration"><MenuItem x:Name="PaintModeMenu" Header="_Sélectionner des zones" IsCheckable="True" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed"/><MenuItem Header="Appliquer la couleur aux zones" Click="ApplyPaintSelection_Click"/><MenuItem Header="Effacer la sélection" Click="ClearPaintSelection_Click"/><Separator/><MenuItem Header="Galerie de styles…" Click="StyleGallery_Click"/><MenuItem Header="Enregistrer le style actuel…" Click="SaveStyle_Click"/></MenuItem>
+      <MenuItem Header="_Images et logos"><MenuItem Header="_Importer un logo ou une image…" Click="ImportPattern_Click"/><MenuItem Header="_Retirer tous les logos" Click="RemovePattern_Click"/></MenuItem>
       <MenuItem Header="_Affichage"><MenuItem Header="Isométrique" Click="ViewIso_Click"/><MenuItem Header="Face" Click="ViewFront_Click"/><MenuItem Header="Arrière" Click="ViewBack_Click"/><MenuItem Header="Gauche" Click="ViewLeft_Click"/><MenuItem Header="Droite" Click="ViewRight_Click"/><MenuItem Header="Dessus" Click="ViewTop_Click"/><MenuItem Header="Dessous" Click="ViewBottom_Click"/><Separator/><MenuItem x:Name="PlateMenuItem" Header="Afficher le plateau" IsCheckable="True" Click="ToggleGrid_Click"/><MenuItem x:Name="InertiaMenuItem" Header="Inertie de navigation" IsCheckable="True" Click="ToggleInertia_Click"/><MenuItem Header="Perspective/orthographique" Click="TogglePerspective_Click"/></MenuItem>
       <MenuItem Header="_Aide"><MenuItem Header="Guide des fonctions" Click="HelpGuide_Click"/><MenuItem Header="Assistant de bienvenue" Click="Welcome_Click"/><MenuItem Header="Nouveautés de cette version" Click="WhatsNew_Click"/><MenuItem Header="Soutenir le projet via PayPal" Click="Donate_Click"/><MenuItem Header="Rechercher une mise à jour" Click="Update_Click"/><Separator/><MenuItem Header="À propos" Click="About_Click"/></MenuItem>
     </Menu>
 
     <ToolBar x:Name="MainToolbar" DockPanel.Dock="Top" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
       <Button Click="BeginnerMode_Click">Mode débutant</Button><Button Click="Import_Click" ToolTip="Ouvrir un fichier 3MF ou STL">Importer 3MF/STL</Button><Button Click="SaveProject_Click">Enregistrer projet</Button><Button Click="Export_Click">Exporter 3MF</Button><Button x:Name="OpenSlicerButton" Click="OpenPreferredSlicer_Click" IsEnabled="False">Ouvrir dans mon slicer</Button>
-      <Separator/><Button Click="Undo_Click">Annuler</Button><Button Click="Redo_Click">Rétablir</Button><Separator/><Button Click="StyleGallery_Click">Galerie styles</Button><Button Click="ColorCount_Click">Nombre de couleurs</Button><Button Click="PrintAssistant_Click">Assistant impression</Button><Button Click="Regenerate_Click">Régénérer</Button><Button Click="Settings_Click">Paramètres</Button>
+      <Separator/><Button Click="Undo_Click">Annuler</Button><Button Click="Redo_Click">Rétablir</Button><Separator/><Button Click="ImportPattern_Click">Importer logo/image</Button><Button Click="StyleGallery_Click">Galerie styles</Button><Button Click="ColorCount_Click">Nombre de couleurs</Button><Button Click="PrintAssistant_Click">Assistant impression</Button><Button Click="Regenerate_Click">Régénérer</Button><Button Click="Settings_Click">Paramètres</Button>
     </ToolBar>
 
     <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource PrimaryText}">
@@ -176,6 +177,22 @@
               <WrapPanel Margin="0,4,0,0">
                 <CheckBox x:Name="LayerVisible" Content="Visible" IsChecked="True" Checked="LayerProperty_Changed" Unchecked="LayerProperty_Changed" Margin="0,0,12,0"/>
                 <CheckBox x:Name="LayerLocked" Content="Verrouillé" Checked="LayerProperty_Changed" Unchecked="LayerProperty_Changed"/>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+          <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10">
+            <StackPanel>
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Click="ImportPattern_Click" Content="+ Importer"/>
+                <TextBlock Text="LOGOS ET IMAGES" FontWeight="Bold" VerticalAlignment="Center"/>
+              </DockPanel>
+              <TextBlock Text="Chaque logo reste indépendant et modifiable." TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,4,0,6"/>
+              <ListBox x:Name="LogoLayersList" Height="105" DisplayMemberPath="Name" SelectionChanged="LogoLayersList_SelectionChanged"/>
+              <WrapPanel Margin="0,6,0,0">
+                <Button Click="EditLogo_Click" Content="Modifier"/>
+                <Button Click="DuplicateLogo_Click" Content="Dupliquer"/>
+                <Button Click="ToggleLogo_Click" Content="Afficher/masquer"/>
+                <Button Click="DeleteLogo_Click" Content="Supprimer"/>
               </WrapPanel>
             </StackPanel>
           </Border>

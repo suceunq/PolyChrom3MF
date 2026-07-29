@@ -11,12 +11,12 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
-        "Version de stabilisation 2.0.15.\n" +
-        "Le module expérimental d’importation et de placement d’images/logos est retiré de l’interface utilisateur.\n" +
-        "Les boutons, menus, transformations et raccourcis associés ne sont plus accessibles tant que le module reconstruit n’est pas validé.\n" +
-        "Les projets existants restent lisibles et conservent leurs couleurs déjà calculées.\n" +
-        "La coloration 3MF/STL, les calques, la peinture, les palettes, les profils d’impression et les exports slicers restent disponibles.\n" +
-        "La documentation a été alignée sur les fonctions réellement présentes dans cette version stable.";
+        "Nouveau module de logos et d’images 2.1.0.\n" +
+        "Import PNG, JPG, JPEG, WebP et SVG avec transparence, détourage automatique, couleur dominante, gomme et restauration.\n" +
+        "Placement sur une surface plane ou courbe, déplacement, taille libre, rotation, inclinaison, miroir, relief et répétitions indépendantes.\n" +
+        "Chaque logo reste modifiable, duplicable, masquable ou supprimable dans son propre calque sans altérer le fond du modèle.\n" +
+        "Les projets .poly3mf embarquent les images et leurs ancrages ; l’export 3MF conserve la position et les couleurs.\n" +
+        "Export des très gros modèles réécrit en flux continu : vérification plus rapide et consommation mémoire fortement réduite.";
 
     const string LatestReleaseApi = "https://api.github.com/repos/suceunq/PolyChrom3MF/releases/latest";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";

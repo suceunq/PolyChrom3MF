@@ -24,7 +24,7 @@ jobs:
         run: dotnet test PolyChrom3MF.sln -c Release
 
       - name: Publier l'application autonome
-        run: dotnet publish PolyChrom3MF.App/PolyChrom3MF.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/app
+        run: dotnet publish PolyChrom3MF.App/PolyChrom3MF.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o publish/app
 
       - name: Installer Inno Setup
         run: choco install innosetup --no-progress -y
