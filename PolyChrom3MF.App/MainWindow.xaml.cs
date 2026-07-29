@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
+using System.Windows.Media.Imaging;
 using PolyChrom3MF.Logos;
 using Color = System.Windows.Media.Color;
 using DataFormats = System.Windows.DataFormats;
@@ -551,6 +552,9 @@ public partial class MainWindow : Window
                 SourceFormat = raster.SourceFormat,
                 Png = LogoImageImporter.EncodePng(raster)
             };
+            var aspect = asset.Width / (double)Math.Max(1, asset.Height);
+            var initialStretchX = aspect >= 1 ? 100 : Math.Max(10, aspect * 100);
+            var initialStretchY = aspect >= 1 ? Math.Max(10, 100 / aspect) : 100;
             var selectedObject = ObjectsList.SelectedItem as ModelObject ?? _doc.Objects.First();
             var initial = new PatternSettings(
                 preparedImage,
@@ -561,7 +565,10 @@ public partial class MainWindow : Window
                 MonochromeLogo: true,
                 LogoColorIndex: 0,
                 RepeatAcrossModel: false,
-                BackFacePreview: false);
+                BackFacePreview: false,
+                StretchX: initialStretchX,
+                StretchY: initialStretchY);
+            UpdatePatternGizmoImage(asset, initial);
             editor = new PatternWindow(preparedImage, _doc.Objects, _selected.Colors, initial, asset.Name);
             editor.PreviewRequested += PreviewLogo;
             editor.PlacementModeChanged += armed =>
@@ -674,6 +681,7 @@ public partial class MainWindow : Window
             _activePatternEditor = null;
             PatternEditorHost.Content = null;
             SetPatternEditingUi(false);
+            PatternGizmoImage.Source = null;
             previewCancellation?.Cancel();
             previewCancellation?.Dispose();
             SetBusy(false);
@@ -698,26 +706,16 @@ public partial class MainWindow : Window
                     return;
                 }
                 if (asset is null) return;
-                var previewInstance = LogoApplicationService.FromPattern(
-                    asset.Id, settings, Path.GetFileNameWithoutExtension(asset.Name), settings.LogoColorIndex);
-                var previewProject = _logoProject with
-                {
-                    Assets = [.. _logoProject.Assets, asset],
-                    Layers =
-                    [
-                        .. _logoProject.Layers,
-                        new LogoLayer { Name = "Aperçu", Instances = [previewInstance], Order = _logoProject.Layers.Count }
-                    ]
-                };
-                var bases = _logoBaseProposals ?? proposalsBeforePreview;
-                var preview = await Task.Run(() =>
-                    _logoApplication.Preview(documentBeforePreview, bases, previewProject, cancellation.Token),
-                    cancellation.Token);
+                UpdatePatternGizmoImage(asset, settings);
+                await Task.Yield();
                 if (cancellation.IsCancellationRequested || revision != previewRevision) return;
-                _proposals = preview;
-                _selected = preview[Math.Min(proposalIndex, preview.Count - 1)];
-                Render();
-                editor?.SetPreviewStatus("Aperçu exact : le fond reste inchangé.");
+                // The source mesh may be intentionally coarse. Recoloring its
+                // whole triangles during placement produces a false, jagged
+                // preview. The transparent gizmo above shows the exact raster;
+                // printable geometry is generated only after validation.
+                _proposals = proposalsBeforePreview;
+                _selected = selectedBeforePreview;
+                editor?.SetPreviewStatus("Aperçu fidèle du logo. La subdivision locale précise sera créée à la validation.");
                 StatusText.Text = "Aperçu du logo actualisé.";
             }
             catch (OperationCanceledException) { }
@@ -2610,6 +2608,48 @@ public partial class MainWindow : Window
         PatternGizmo.RenderTransform = Transform.Identity;
         Canvas.SetLeft(PatternGizmo, _patternGizmoCenter.X - size / 2);
         Canvas.SetTop(PatternGizmo, _patternGizmoCenter.Y - size / 2);
+    }
+
+    void UpdatePatternGizmoImage(LogoAsset asset, PatternSettings settings)
+    {
+        var raster = LogoImageImporter.DecodeNormalizedPng(asset.Png, asset.Name);
+        var pixels = new byte[raster.PixelCount * 4];
+        byte tintRed = 255, tintGreen = 255, tintBlue = 255;
+        if (settings.MonochromeLogo &&
+            _selected is not null &&
+            settings.LogoColorIndex >= 0 &&
+            settings.LogoColorIndex < _selected.Colors.Count)
+        {
+            var hex = _selected.Colors[settings.LogoColorIndex].Hex.TrimStart('#');
+            if (hex.Length == 6)
+            {
+                byte.TryParse(hex.AsSpan(0, 2), System.Globalization.NumberStyles.HexNumber, null, out tintRed);
+                byte.TryParse(hex.AsSpan(2, 2), System.Globalization.NumberStyles.HexNumber, null, out tintGreen);
+                byte.TryParse(hex.AsSpan(4, 2), System.Globalization.NumberStyles.HexNumber, null, out tintBlue);
+            }
+        }
+
+        for (var index = 0; index < raster.PixelCount; index++)
+        {
+            var source = index * 4;
+            var target = source;
+            pixels[target] = settings.MonochromeLogo ? tintBlue : raster.Rgba[source + 2];
+            pixels[target + 1] = settings.MonochromeLogo ? tintGreen : raster.Rgba[source + 1];
+            pixels[target + 2] = settings.MonochromeLogo ? tintRed : raster.Rgba[source];
+            pixels[target + 3] = raster.Rgba[source + 3];
+        }
+
+        var bitmap = BitmapSource.Create(
+            raster.Width,
+            raster.Height,
+            96,
+            96,
+            PixelFormats.Bgra32,
+            null,
+            pixels,
+            raster.Width * 4);
+        bitmap.Freeze();
+        PatternGizmoImage.Source = bitmap;
     }
 
     void UpdatePatternGizmoProjection()

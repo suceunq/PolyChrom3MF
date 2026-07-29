@@ -11,12 +11,12 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
-        "Nouveau module de logos et d’images 2.1.0.\n" +
-        "Import PNG, JPG, JPEG, WebP et SVG avec transparence, détourage automatique, couleur dominante, gomme et restauration.\n" +
-        "Placement sur une surface plane ou courbe, déplacement, taille libre, rotation, inclinaison, miroir, relief et répétitions indépendantes.\n" +
-        "Chaque logo reste modifiable, duplicable, masquable ou supprimable dans son propre calque sans altérer le fond du modèle.\n" +
-        "Les projets .poly3mf embarquent les images et leurs ancrages ; l’export 3MF conserve la position et les couleurs.\n" +
-        "Export des très gros modèles réécrit en flux continu : vérification plus rapide et consommation mémoire fortement réduite.";
+        "Correction de fidélité des logos 2.1.1.\n" +
+        "L’aperçu affiche désormais directement le logo transparent, avec ses proportions d’origine et la couleur de filament choisie.\n" +
+        "Les contours, lettres, trous et traits fins ne sont plus remplacés par de gros triangles irréguliers.\n" +
+        "La subdivision locale adaptative atteint jusqu’à six niveaux uniquement sous l’empreinte du logo.\n" +
+        "Le fond et les couleurs déjà présents sur la pièce restent inchangés pendant le placement.\n" +
+        "Le calcul est plafonné selon la taille du modèle afin de préserver la fluidité et un export 3MF raisonnable.";
 
     const string LatestReleaseApi = "https://api.github.com/repos/suceunq/PolyChrom3MF/releases/latest";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";

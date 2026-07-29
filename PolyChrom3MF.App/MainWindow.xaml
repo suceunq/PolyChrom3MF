@@ -67,9 +67,10 @@
           </Canvas>
           <Canvas x:Name="PatternGizmoCanvas" Visibility="Collapsed" Panel.ZIndex="16">
             <Border x:Name="PatternGizmo" Width="170" Height="170" BorderBrush="#FF42A5FF" BorderThickness="2"
-                    Background="#080070C0" MouseLeftButtonDown="PatternGizmo_MoveDown" MouseMove="PatternGizmo_MouseMove"
+                    Background="#020070C0" MouseLeftButtonDown="PatternGizmo_MoveDown" MouseMove="PatternGizmo_MouseMove"
                     MouseLeftButtonUp="PatternGizmo_MouseUp" MouseRightButtonUp="PatternGizmo_RightButtonUp">
               <Grid>
+                <Image x:Name="PatternGizmoImage" Stretch="Fill" IsHitTestVisible="False"/>
                 <TextBlock Text="Glisser pour déplacer" Foreground="#FFFFFFFF" Background="#99000000"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Padding="6,3"/>
                 <Ellipse Width="18" Height="18" Fill="#FFFFFFFF" Stroke="#FF1785D1" StrokeThickness="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-10,-10,0,0"

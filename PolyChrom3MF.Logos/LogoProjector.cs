@@ -9,6 +9,7 @@ public sealed class LogoProjector
         IReadOnlyList<LogoMeshObject> objects,
         LogoProject project,
         byte alphaThreshold = 16,
+        bool includeTransparentFootprint = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(objects);
@@ -24,7 +25,14 @@ public sealed class LogoProjector
             var raster = LogoImageImporter.DecodeNormalizedPng(asset.Png, asset.Name);
             var target = objects.FirstOrDefault(item => item.Index == instance.Transform.Anchor.ObjectIndex)
                          ?? throw new InvalidDataException($"Objet cible absent pour le logo « {instance.Name} ».");
-            ProjectInstance(target, raster, instance, alphaThreshold, hits, cancellationToken);
+            ProjectInstance(
+                target,
+                raster,
+                instance,
+                alphaThreshold,
+                includeTransparentFootprint,
+                hits,
+                cancellationToken);
         }
         return new LogoProjectionResult(hits.Values.OrderBy(hit => hit.ObjectIndex).ThenBy(hit => hit.TriangleIndex).ToArray());
     }
@@ -34,6 +42,7 @@ public sealed class LogoProjector
         LogoRaster raster,
         LogoInstance instance,
         byte alphaThreshold,
+        bool includeTransparentFootprint,
         Dictionary<(int Object, int Triangle), LogoProjectionHit> hits,
         CancellationToken cancellationToken)
     {
@@ -61,8 +70,13 @@ public sealed class LogoProjector
             triangleNormal = Vector3.Normalize(triangleNormal);
             if (Vector3.Dot(triangleNormal, normal) < -.15f) return null;
 
-            byte alpha = 0, red = 0, green = 0, blue = 0;
-            void Sample(Vector3 sample)
+            var alphaSum = 0;
+            var weightedRed = 0;
+            var weightedGreen = 0;
+            var weightedBlue = 0;
+            var validSamples = 0;
+
+            (float U, float V) ProjectUv(Vector3 sample)
             {
                 var delta = sample - transform.Anchor.Position;
                 var (localU, localV) = Coordinates(delta, transform, tangent, bitangent, normal);
@@ -74,17 +88,39 @@ public sealed class LogoProjector
                 if (transform.MirrorVertical) rotatedV = -rotatedV;
                 var u = rotatedU / transform.WidthMm + .5f;
                 var v = .5f - rotatedV / transform.HeightMm;
+                return (u, v);
+            }
+
+            void Sample(Vector3 sample)
+            {
+                validSamples++;
+                var (u, v) = ProjectUv(sample);
                 if (u < 0 || u > 1 || v < 0 || v > 1) return;
                 var x = Math.Clamp((int)MathF.Round(u * (raster.Width - 1)), 0, raster.Width - 1);
                 var y = Math.Clamp((int)MathF.Round(v * (raster.Height - 1)), 0, raster.Height - 1);
                 var offset = (y * raster.Width + x) * 4;
-                var candidate = raster.Rgba[offset + 3];
-                if (candidate <= alpha) return;
-                alpha = candidate;
-                red = raster.Rgba[offset];
-                green = raster.Rgba[offset + 1];
-                blue = raster.Rgba[offset + 2];
+                var alpha = raster.Rgba[offset + 3];
+                alphaSum += alpha;
+                weightedRed += raster.Rgba[offset] * alpha;
+                weightedGreen += raster.Rgba[offset + 1] * alpha;
+                weightedBlue += raster.Rgba[offset + 2] * alpha;
             }
+
+            if (includeTransparentFootprint)
+            {
+                var uvA = ProjectUv(a);
+                var uvB = ProjectUv(b);
+                var uvC = ProjectUv(c);
+                var minU = MathF.Min(uvA.U, MathF.Min(uvB.U, uvC.U));
+                var maxU = MathF.Max(uvA.U, MathF.Max(uvB.U, uvC.U));
+                var minV = MathF.Min(uvA.V, MathF.Min(uvB.V, uvC.V));
+                var maxV = MathF.Max(uvA.V, MathF.Max(uvB.V, uvC.V));
+                if (maxU < 0 || minU > 1 || maxV < 0 || minV > 1) return null;
+                return new LogoProjectionHit(
+                    mesh.Index, triangleIndex, instance.FilamentIndex, instance.Id, 1,
+                    255, 255, 255, instance.UseImageColors);
+            }
+
             Sample(center);
             Sample(a);
             Sample(b);
@@ -92,10 +128,18 @@ public sealed class LogoProjector
             Sample((a + b) * .5f);
             Sample((b + c) * .5f);
             Sample((c + a) * .5f);
-            if (alpha < alphaThreshold) return null;
+            if (validSamples == 0) return null;
+            var averageAlpha = alphaSum / validSamples;
+            // Require meaningful area coverage, not merely one opaque vertex.
+            // Anti-aliased edge pixels remain supported after local refinement.
+            if (averageAlpha < Math.Max(alphaThreshold, (byte)48)) return null;
+            var colorWeight = Math.Max(1, alphaSum);
             return new LogoProjectionHit(
-                mesh.Index, triangleIndex, instance.FilamentIndex, instance.Id, alpha / 255f,
-                red, green, blue, instance.UseImageColors);
+                mesh.Index, triangleIndex, instance.FilamentIndex, instance.Id, averageAlpha / 255f,
+                (byte)(weightedRed / colorWeight),
+                (byte)(weightedGreen / colorWeight),
+                (byte)(weightedBlue / colorWeight),
+                instance.UseImageColors);
         }
 
         if (mesh.Triangles.Count < 100_000)
