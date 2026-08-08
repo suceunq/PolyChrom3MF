@@ -6,6 +6,8 @@ namespace PolyChrom3MF.Logos;
 public sealed class LogoProjectStore
 {
     const string ManifestEntry = "polylogo/project.json";
+    const int MaxEntries = 10_001;
+    const long MaxManifestBytes = 64L * 1024 * 1024;
     static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -37,9 +39,13 @@ public sealed class LogoProjectStore
     {
         ArgumentNullException.ThrowIfNull(source);
         using var archive = new ZipArchive(source, ZipArchiveMode.Read, leaveOpen: true);
-        if (archive.Entries.Select(entry => entry.FullName).Distinct(StringComparer.Ordinal).Count() != archive.Entries.Count)
+        if (archive.Entries.Count is < 1 or > MaxEntries)
+            throw new InvalidDataException("Le projet contient un nombre anormal de fichiers.");
+        if (archive.Entries.Select(entry => entry.FullName).Distinct(StringComparer.OrdinalIgnoreCase).Count() != archive.Entries.Count)
             throw new InvalidDataException("Le projet contient des entrées dupliquées.");
         var manifest = archive.GetEntry(ManifestEntry) ?? throw new InvalidDataException("Projet de logos incomplet.");
+        if (manifest.Length <= 0 || manifest.Length > MaxManifestBytes)
+            throw new InvalidDataException("Manifeste de logos absent ou trop volumineux.");
         LogoProject project;
         using (var stream = manifest.Open())
             project = JsonSerializer.Deserialize<LogoProject>(stream, JsonOptions)
@@ -74,11 +80,16 @@ public sealed class LogoProjectStore
     public static void Validate(LogoProject project)
     {
         if (project.SchemaVersion != 1) throw new InvalidDataException("Version de projet invalide.");
+        if (project.Assets.Count > 10_000 || project.Layers.Count > 10_000 ||
+            project.Layers.Sum(layer => (long)layer.Instances.Count) > 100_000)
+            throw new InvalidDataException("Le projet de logos contient trop d’éléments.");
         var assetIds = new HashSet<Guid>();
         foreach (var asset in project.Assets)
         {
             if (asset.Id == Guid.Empty || !assetIds.Add(asset.Id)) throw new InvalidDataException("Identifiant d'image invalide.");
             if (string.IsNullOrWhiteSpace(asset.Name) || asset.Name.Length > 260) throw new InvalidDataException("Nom d'image invalide.");
+            if (asset.Width <= 0 || asset.Height <= 0 || !Enum.IsDefined(asset.SourceFormat))
+                throw new InvalidDataException($"Propriétés d’image invalides pour « {asset.Name} ».");
             if (asset.Png.Length > 0)
             {
                 var raster = LogoImageImporter.DecodeNormalizedPng(asset.Png, asset.Name);
@@ -87,9 +98,12 @@ public sealed class LogoProjectStore
             }
         }
         var instanceIds = new HashSet<Guid>();
+        var layerIds = new HashSet<Guid>();
         foreach (var layer in project.Layers)
         {
-            if (layer.Id == Guid.Empty) throw new InvalidDataException("Identifiant de calque invalide.");
+            if (layer.Id == Guid.Empty || !layerIds.Add(layer.Id)) throw new InvalidDataException("Identifiant de calque invalide.");
+            if (string.IsNullOrWhiteSpace(layer.Name) || layer.Name.Length > 260)
+                throw new InvalidDataException("Nom de calque invalide.");
             foreach (var instance in layer.Instances)
             {
                 if (instance.Id == Guid.Empty || !instanceIds.Add(instance.Id)) throw new InvalidDataException("Identifiant de logo invalide.");

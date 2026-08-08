@@ -52,7 +52,19 @@ public sealed class SettingsService
     {
         Normalize(value);
         Directory.CreateDirectory(_folder);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true }));
+        var temporary = FilePath + ".tmp";
+        try
+        {
+            File.WriteAllText(
+                temporary,
+                JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true }),
+                new System.Text.UTF8Encoding(false));
+            File.Move(temporary, FilePath, true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+        }
     }
 
     internal static AppSettings Normalize(AppSettings value)

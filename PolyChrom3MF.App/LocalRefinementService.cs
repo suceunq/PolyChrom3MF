@@ -34,7 +34,21 @@ public sealed class LocalRefinementService
             if (selection.TryGetValue(obj.Index, out var selected))
                 refinedSelection[obj.Index] = Enumerable.Range(0, result.SourceTriangles.Length).Where(index => selected.Contains(result.SourceTriangles[index])).ToHashSet();
         }
-        var refinedDocument = document with { Objects = objects, TriangleCount = objects.Sum(obj => (long)obj.Triangles.Count), IsDerived = true };
+        // Original 3MF colours are part of the non-destructive import state too.
+        // Keep their per-face mapping aligned with the derived mesh so a later
+        // reset/export never reads arrays from the pre-refinement topology.
+        var originalAssignments = document.OriginalTriangleAssignments?.ToDictionary(
+            pair => pair.Key,
+            pair => mappings.TryGetValue(pair.Key, out var parents)
+                ? parents.Select(parent => parent >= 0 && parent < pair.Value.Length ? pair.Value[parent] : 0).ToArray()
+                : (int[])pair.Value.Clone());
+        var refinedDocument = document with
+        {
+            Objects = objects,
+            TriangleCount = objects.Sum(obj => (long)obj.Triangles.Count),
+            OriginalTriangleAssignments = originalAssignments,
+            IsDerived = true
+        };
         List<ColorProposal> MapProposals(IReadOnlyList<ColorProposal> source) => source.Select(proposal =>
         {
             var mapped = Clone(proposal);

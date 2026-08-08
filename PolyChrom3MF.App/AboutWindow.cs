@@ -27,7 +27,7 @@ public sealed class AboutWindow : Window
         var panel = new StackPanel { Margin = new Thickness(30) };
         panel.Children.Add(new TextBlock { Text = "PolyChrom 3MF", FontSize = 28, FontWeight = FontWeights.Bold });
         panel.Children.Add(new TextBlock { Text = $"Version {UpdateService.CurrentVersion().ToString(3)}", Foreground = (Brush)Application.Current.Resources["SecondaryText"], Margin = new Thickness(0, 2, 0, 18) });
-        panel.Children.Add(new TextBlock { Text = "Coloration procédurale de modèles 3MF et STL, de 4 à 32 couleurs.", TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = "Coloration procédurale de modèles 3MF et STL, de 2 à 32 couleurs.", TextWrapping = TextWrapping.Wrap });
         var credit = new Border { Background = (Brush)Application.Current.Resources["ControlBackground"], BorderBrush = (Brush)Application.Current.Resources["PanelBorder"], BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(16), Margin = new Thickness(0, 18, 0, 16) };
         var creditPanel = new StackPanel();
         creditPanel.Children.Add(new TextBlock { Text = "Sur une idée de 3D TER", FontSize = 18, FontWeight = FontWeights.Bold });
@@ -42,6 +42,11 @@ public sealed class AboutWindow : Window
 
     static void OpenLink(object sender, RequestNavigateEventArgs e)
     {
-        Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true }); e.Handled = true;
+        e.Handled = true;
+        if (e.Uri.Scheme != Uri.UriSchemeHttps ||
+            !e.Uri.Host.Equals("www.tiktok.com", StringComparison.OrdinalIgnoreCase) ||
+            !e.Uri.AbsolutePath.Equals("/@3d_ter", StringComparison.Ordinal))
+            return;
+        Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
     }
 }

@@ -70,6 +70,7 @@ public sealed class ThreeMfService
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
+            var (originalColors, originalAssignments) = ReadOriginalColors(parts, objects, ReadFilamentColors(zip));
             var warnings = new List<string>();
             if (parts.Count > 1) warnings.Add($"Structure 3MF multipartie détectée ({parts.Count} fragments). ");
             if (objects.Count == 1 && componentCount == 0) warnings.Add("Objet fusionné : aucune séparation sémantique ne sera inventée.");
@@ -79,7 +80,11 @@ public sealed class ThreeMfService
             return new ModelDocument(path, new XDocument(), mainEntry.FullName, objects,
                 maxX - minX, maxY - minY, maxZ - minZ,
                 zip.Entries.Select(e => e.FullName).ToList(), objects.Sum(o => (long)o.Triangles.Count),
-                warnings.Count == 0 ? null : string.Join(" ", warnings), mainXml.Root!.Attribute("unit")?.Value ?? "millimeter", componentCount, existingColors, "3MF");
+                warnings.Count == 0 ? null : string.Join(" ", warnings), mainXml.Root!.Attribute("unit")?.Value ?? "millimeter", componentCount, existingColors, "3MF")
+            {
+                OriginalColors = originalColors,
+                OriginalTriangleAssignments = originalAssignments
+            };
         }
         catch (InvalidDataException) { throw; }
         catch (Exception ex) when (ex is IOException or XmlException or NotSupportedException or FormatException or OverflowException)
@@ -424,10 +429,13 @@ public sealed class ThreeMfService
     static void ValidateArchive(ZipArchive zip)
     {
         if (zip.Entries.Count == 0) throw new InvalidDataException("L’archive 3MF est vide.");
+        if (zip.Entries.Count > 100_000) throw new InvalidDataException("L’archive 3MF contient un nombre anormal de fichiers.");
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in zip.Entries)
         {
             var normalized = entry.FullName.Replace('\\', '/');
             if (normalized.StartsWith('/') || normalized.Split('/').Any(p => p == "..")) throw new InvalidDataException("Archive refusée : chemin ZIP non sûr.");
+            if (!paths.Add(normalized)) throw new InvalidDataException("Archive refusée : chemins ZIP dupliqués.");
         }
     }
 
@@ -747,6 +755,153 @@ public sealed class ThreeMfService
     static int Integer(XElement element, string name) => int.Parse(element.Attribute(name)?.Value ?? "-1", NumberStyles.Integer, CultureInfo.InvariantCulture);
     internal static double UnitToMillimeters(string unit) => unit.ToLowerInvariant() switch { "micron" => .001, "centimeter" => 10, "inch" => 25.4, "foot" => 304.8, "meter" => 1000, _ => 1 };
 
+    /// <summary>Reads filament colors from Bambu/Orca project_settings.config metadata.</summary>
+    static List<string>? ReadFilamentColors(ZipArchive zip)
+    {
+        var entry = zip.GetEntry("Metadata/project_settings.config");
+        if (entry is null) return null;
+        try
+        {
+            using var stream = entry.Open();
+            using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { AllowTrailingCommas = true, MaxDepth = 16 });
+            if (!document.RootElement.TryGetProperty("filament_colour", out var colours) || colours.ValueKind != JsonValueKind.Array)
+                return null;
+            var result = new List<string>();
+            foreach (var colour in colours.EnumerateArray())
+            {
+                var hex = colour.GetString();
+                if (!string.IsNullOrWhiteSpace(hex) && hex.Length <= 9)
+                    result.Add(hex);
+            }
+            return result.Count > 0 ? result : null;
+        }
+        catch { return null; }
+    }
+
+    static (List<PaletteColor>? Colors, Dictionary<int, int[]>? Assignments) ReadOriginalColors(
+        List<(ZipArchiveEntry Entry, XDocument Xml)> parts, List<ModelObject> objects, List<string>? filamentColours = null)
+    {
+        var allColors = new List<PaletteColor>();
+        var hexToDedupIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var objectAssignments = new Dictionary<int, int[]>();
+
+        // Pre-initialize filament colors from Bambu/Orca project settings (if available).
+        // This is done once, outside the per-object loop.
+        var paintColorToFilament = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (filamentColours is { Count: > 0 })
+        {
+            for (var fi = 0; fi < filamentColours.Count; fi++)
+            {
+                var hex = NormalizeImportedColor(filamentColours[fi]);
+                if (hex is not null && !hexToDedupIndex.ContainsKey(hex))
+                {
+                    hexToDedupIndex[hex] = allColors.Count;
+                    allColors.Add(new PaletteColor($"Filament {fi + 1}", hex));
+                }
+            }
+            for (var si = 1; si < SlicerFilamentStates.Length && si - 1 < filamentColours.Count; si++)
+                paintColorToFilament[SlicerFilamentStates[si]] = si - 1;
+        }
+
+        foreach (var (entry, xml) in parts)
+        {
+            var resources = xml.Root?.Element(Core + "resources");
+            if (resources is null) continue;
+            var partPath = NormalizePartPath(entry.FullName);
+
+            // Property indexes are local to each basematerials resource (pid),
+            // not global across the 3MF package.
+            var colorsByResource = new Dictionary<string, Dictionary<int, int>>(StringComparer.Ordinal);
+            foreach (var basematerials in resources.Elements(Core + "basematerials"))
+            {
+                var resourceId = basematerials.Attribute("id")?.Value;
+                if (string.IsNullOrWhiteSpace(resourceId)) continue;
+                var resourceColors = new Dictionary<int, int>();
+                var propertyIndex = 0;
+                foreach (var baseElement in basematerials.Elements(Core + "base"))
+                {
+                    var name = baseElement.Attribute("name")?.Value ?? $"Couleur {allColors.Count + 1}";
+                    var hex = NormalizeImportedColor(baseElement.Attribute("displaycolor")?.Value);
+                    if (hex is null) { propertyIndex++; continue; }
+                    if (!hexToDedupIndex.TryGetValue(hex, out var dedupIdx))
+                    {
+                        dedupIdx = allColors.Count;
+                        hexToDedupIndex[hex] = dedupIdx;
+                        allColors.Add(new PaletteColor(name, hex));
+                    }
+                    resourceColors[propertyIndex++] = dedupIdx;
+                }
+                colorsByResource[resourceId] = resourceColors;
+            }
+
+            // Read per-triangle color assignments from each object's mesh
+            foreach (var objElement in resources.Elements(Core + "object"))
+            {
+                var mesh = objElement.Element(Core + "mesh");
+                if (mesh is null) continue;
+                var objId = objElement.Attribute("id")?.Value;
+                // Object ids may repeat in different production fragments.
+                var targetObj = objects.FirstOrDefault(o => o.Id == objId && o.PartPath.Equals(partPath, StringComparison.OrdinalIgnoreCase));
+                if (targetObj is null) continue;
+
+                var triangleElements = mesh.Element(Core + "triangles")?.Elements(Core + "triangle").ToList();
+                if (triangleElements is null || triangleElements.Count != targetObj.Triangles.Count) continue;
+
+                var triColors = new int[targetObj.Triangles.Count];
+                var hasAnyColor = false;
+                for (var i = 0; i < triangleElements.Count; i++)
+                {
+                    var tri = triangleElements[i];
+                    var propertyId = tri.Attribute("pid")?.Value ?? objElement.Attribute("pid")?.Value;
+                    var propertyIndexText = tri.Attribute("p1")?.Value ?? objElement.Attribute("pindex")?.Value;
+                    if (propertyId is not null && propertyIndexText is not null &&
+                        int.TryParse(propertyIndexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var propertyIndex) &&
+                        colorsByResource.TryGetValue(propertyId, out var resourceColors) &&
+                        resourceColors.TryGetValue(propertyIndex, out var mappedIdx))
+                    {
+                        triColors[i] = mappedIdx;
+                        hasAnyColor = true;
+                        continue;
+                    }
+                    // Try Bambu/Orca paint_color format
+                    var paintColor = tri.Attribute("paint_color")?.Value;
+                    if (paintColor is not null && paintColorToFilament.TryGetValue(paintColor, out var filamentIdx) &&
+                        filamentColours is not null && filamentIdx < filamentColours.Count)
+                    {
+                        var hex = NormalizeImportedColor(filamentColours[filamentIdx]);
+                        if (hex is not null && hexToDedupIndex.TryGetValue(hex, out var dedupIdx))
+                        {
+                            triColors[i] = dedupIdx;
+                            hasAnyColor = true;
+                        }
+                        else
+                        {
+                            triColors[i] = 0;
+                        }
+                        continue;
+                    }
+                    triColors[i] = 0;
+                }
+                if (hasAnyColor)
+                    objectAssignments[targetObj.Index] = triColors;
+            }
+        }
+
+        if (allColors.Count == 0 || objectAssignments.Count == 0)
+            return (null, null);
+
+        return (allColors, objectAssignments);
+    }
+
+    static string? NormalizeImportedColor(string? value)
+    {
+        var digits = value?.Trim().TrimStart('#');
+        if (digits is null || digits.Length is not (6 or 8) || !digits.All(Uri.IsHexDigit)) return null;
+        // 3MF stores optional alpha after RGB. Filaments are opaque, so retain
+        // the exact RGB channels and ignore that transparency byte.
+        return "#" + digits[..6].ToUpperInvariant();
+    }
+
     sealed record ModelPart(string Path, XDocument Xml, double UnitScale, Dictionary<string, XElement> Objects);
 }
 
@@ -756,7 +911,13 @@ public sealed record ModelObject(int Index, string Id, List<Vertex> Vertices, Li
 {
     public override string ToString() => $"Objet {Id} — {Triangles.Count:N0} triangles";
 }
-public sealed record ModelDocument(string Path, XDocument Xml, string ModelEntry, List<ModelObject> Objects, double SizeX, double SizeY, double SizeZ, List<string> Entries, long TriangleCount, string? Warning, string Unit, int ComponentCount, int ExistingColorCount, string SourceFormat, bool IsDerived = false);
+public sealed record ModelDocument(string Path, XDocument Xml, string ModelEntry, List<ModelObject> Objects, double SizeX, double SizeY, double SizeZ, List<string> Entries, long TriangleCount, string? Warning, string Unit, int ComponentCount, int ExistingColorCount, string SourceFormat, bool IsDerived = false)
+{
+    /// <summary>Original basematerials colors read from the 3MF file, or null if none.</summary>
+    public List<PaletteColor>? OriginalColors { get; init; }
+    /// <summary>Per-object, per-triangle original color indices (index into OriginalColors).</summary>
+    public Dictionary<int, int[]>? OriginalTriangleAssignments { get; init; }
+}
 public sealed record PaletteColor(string Name, string Hex)
 {
     public System.Windows.Media.Color Color => (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(Hex)!;

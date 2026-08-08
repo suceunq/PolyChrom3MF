@@ -17,7 +17,7 @@
         <Separator/><MenuItem Header="_Quitter" Click="Quit_Click"/>
       </MenuItem>
       <MenuItem Header="_Édition"><MenuItem Header="_Annuler" Click="Undo_Click" InputGestureText="Ctrl+Z"/><MenuItem Header="_Rétablir" Click="Redo_Click" InputGestureText="Ctrl+Y"/><Separator/><MenuItem Header="_Paramètres…" Click="Settings_Click"/></MenuItem>
-      <MenuItem Header="_Coloration"><MenuItem x:Name="PaintModeMenu" Header="_Sélectionner des zones" IsCheckable="True" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed"/><MenuItem Header="Appliquer la couleur aux zones" Click="ApplyPaintSelection_Click"/><MenuItem Header="Effacer la sélection" Click="ClearPaintSelection_Click"/><Separator/><MenuItem Header="Galerie de styles…" Click="StyleGallery_Click"/><MenuItem Header="Enregistrer le style actuel…" Click="SaveStyle_Click"/></MenuItem>
+      <MenuItem Header="_Coloration"><MenuItem x:Name="PaintModeMenu" Header="_Sélectionner des zones" IsCheckable="True" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed"/><MenuItem Header="Appliquer la couleur aux zones" Click="ApplyPaintSelection_Click"/><MenuItem Header="Réinitialiser la coloration importée" Click="ResetColoring_Click"/><MenuItem Header="Effacer la sélection" Click="ClearPaintSelection_Click"/><Separator/><MenuItem Header="Galerie de styles…" Click="StyleGallery_Click"/><MenuItem Header="Enregistrer le style actuel…" Click="SaveStyle_Click"/></MenuItem>
       <MenuItem Header="_Images et logos"><MenuItem Header="_Importer un logo ou une image…" Click="ImportPattern_Click"/><MenuItem Header="_Retirer tous les logos" Click="RemovePattern_Click"/></MenuItem>
       <MenuItem Header="_Affichage"><MenuItem Header="Isométrique" Click="ViewIso_Click"/><MenuItem Header="Face" Click="ViewFront_Click"/><MenuItem Header="Arrière" Click="ViewBack_Click"/><MenuItem Header="Gauche" Click="ViewLeft_Click"/><MenuItem Header="Droite" Click="ViewRight_Click"/><MenuItem Header="Dessus" Click="ViewTop_Click"/><MenuItem Header="Dessous" Click="ViewBottom_Click"/><Separator/><MenuItem x:Name="PlateMenuItem" Header="Afficher le plateau" IsCheckable="True" Click="ToggleGrid_Click"/><MenuItem x:Name="InertiaMenuItem" Header="Inertie de navigation" IsCheckable="True" Click="ToggleInertia_Click"/><MenuItem Header="Perspective/orthographique" Click="TogglePerspective_Click"/></MenuItem>
       <MenuItem Header="_Aide"><MenuItem Header="Guide des fonctions" Click="HelpGuide_Click"/><MenuItem Header="Assistant de bienvenue" Click="Welcome_Click"/><MenuItem Header="Nouveautés de cette version" Click="WhatsNew_Click"/><MenuItem Header="Soutenir le projet via PayPal" Click="Donate_Click"/><MenuItem Header="Rechercher une mise à jour" Click="Update_Click"/><Separator/><MenuItem Header="À propos" Click="About_Click"/></MenuItem>
@@ -63,6 +63,8 @@
           <Canvas IsHitTestVisible="False" Panel.ZIndex="15">
             <Polyline x:Name="PaintStrokePreview" Visibility="Collapsed" Stroke="#99FFD32D" StrokeThickness="16"
                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+            <Polygon x:Name="PaintStrokeFill" Visibility="Collapsed" Fill="#44FFD32D" Stroke="#BBFFD32D" StrokeThickness="1.5"
+                     StrokeLineJoin="Round"/>
             <Ellipse x:Name="PaintBrushCursor" Visibility="Collapsed" Stroke="#FFFFD32D" StrokeThickness="2" Fill="#22FFD32D"/>
           </Canvas>
           <Canvas x:Name="PatternGizmoCanvas" Visibility="Collapsed" Panel.ZIndex="16">
@@ -155,6 +157,8 @@
           <TextBlock x:Name="ProposalsTitle" Text="4 PROPOSITIONS · 4 COULEURS" FontWeight="Bold" FontSize="16" Margin="0,0,0,8"/>
           <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource PanelBorder}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10">
             <StackPanel>
+              <CheckBox x:Name="PreserveOriginalCheck" Content="Conserver les couleurs d’origine à l’import" IsChecked="True" IsEnabled="False" FontWeight="Bold" ToolTip="Les couleurs importées ne sont jamais remplacées automatiquement."/>
+              <TextBlock Text="Le modèle est toujours importé tel qu’il est dans le fichier. Cliquez volontairement sur une proposition pour appliquer une palette." TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="22,2,0,6"/>
               <CheckBox x:Name="FunMode" Content="Motifs fun sur toute la surface" IsChecked="True" FontWeight="Bold" Checked="FunMode_Changed" Unchecked="FunMode_Changed"/>
               <TextBlock Text="Dégradé ondulé · camouflage · double personnalité · graffiti" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="22,4,0,0"/>
             </StackPanel>
@@ -202,10 +206,16 @@
               <TextBlock Text="COLORATION MANUELLE" FontWeight="Bold"/>
               <CheckBox x:Name="PaintMode" Content="Sélectionner des zones sur le modèle" Checked="PaintMode_Changed" Unchecked="PaintMode_Changed" Margin="0,7,0,5"/>
               <TextBlock Text="Outil" FontSize="12" Margin="0,2,0,3"/>
-              <ComboBox x:Name="PaintTool" SelectedIndex="0" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Face par face (clic)"/><ComboBoxItem Content="Pinceau fluide (cliquer-glisser)"/><ComboBoxItem Content="Rectangle de sélection"/><ComboBoxItem Content="Lasso libre"/></ComboBox>
+              <ComboBox x:Name="PaintTool" SelectedIndex="0" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Triangle — face par face"/><ComboBoxItem Content="Cercle — pinceau visible"/><ComboBoxItem Content="Rectangle de sélection"/><ComboBoxItem Content="Lasso libre"/><ComboBoxItem Content="Sphère — pinceau de surface"/><ComboBoxItem Content="Plage de hauteur — clic"/></ComboBox>
               <TextBlock Text="Taille du pinceau" FontSize="12" Margin="0,2,0,3"/>
               <ComboBox x:Name="PaintBrushSize" SelectedIndex="1" Margin="0,0,0,5" SelectionChanged="PaintTool_Changed"><ComboBoxItem Content="Très fin — 8 px"/><ComboBoxItem Content="Fin — 16 px"/><ComboBoxItem Content="Moyen — 28 px"/><ComboBoxItem Content="Large — 44 px"/><ComboBoxItem Content="Très large — 64 px"/></ComboBox>
-              <TextBlock Text="Couleur à appliquer" FontSize="12" Margin="0,2,0,3"/><ComboBox x:Name="PaintColorCombo" DisplayMemberPath="Label" SelectedIndex="0" Margin="0,0,0,5"/>
+              <TextBlock Text="Dureté (aperçu)" FontSize="12" Margin="0,2,0,0"/><Slider x:Name="PaintHardness" Minimum="0" Maximum="100" Value="100" TickFrequency="10" IsSnapToTickEnabled="True" ToolTip="La peinture exportée reste nette entre filaments ; ce réglage agit sur l’aperçu du pinceau."/>
+              <TextBlock Text="Opacité de l’aperçu" FontSize="12" Margin="0,2,0,0"/><Slider x:Name="PaintPreviewOpacity" Minimum="10" Maximum="100" Value="65" TickFrequency="10" IsSnapToTickEnabled="True"/>
+              <TextBlock Text="Épaisseur de la plage de hauteur" FontSize="12" Margin="0,2,0,0"/><Slider x:Name="PaintHeightRange" Minimum="1" Maximum="30" Value="8" TickFrequency="1" IsSnapToTickEnabled="True" ToolTip="En mode Plage de hauteur, sélectionne les faces autour de l’altitude cliquée."/>
+              <TextBlock Text="Couleur à appliquer" FontSize="12" Margin="0,2,0,3"/>
+              <ComboBox x:Name="PaintColorCombo" SelectedIndex="0" Margin="0,0,0,5" ToolTip="Choisissez directement une couleur de filament">
+                <ComboBox.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" Margin="2"><Border Width="22" Height="22" CornerRadius="11" Background="{Binding Brush}" BorderBrush="#FF9AA5B6" BorderThickness="1" Margin="0,0,7,0"/><TextBlock Text="{Binding Hex}" VerticalAlignment="Center" FontWeight="SemiBold"/></StackPanel></DataTemplate></ComboBox.ItemTemplate>
+              </ComboBox>
               <TextBlock Text="Sélection intelligente" FontSize="12" FontWeight="SemiBold" Margin="0,4,0,3"/>
               <WrapPanel>
                 <Button Tag="island" Click="SmartSelect_Click" Content="Îlot"/>
@@ -216,7 +226,7 @@
               </WrapPanel>
               <DockPanel Margin="0,4,0,5"><Button DockPanel.Dock="Right" Click="SemanticSelect_Click" Content="Détecter"/><ComboBox x:Name="SemanticRegionCombo" SelectedIndex="0" Margin="0,0,5,0"><ComboBoxItem Content="Yeux"/><ComboBoxItem Content="Cheveux"/><ComboBoxItem Content="Vêtements"/><ComboBoxItem Content="Peau"/><ComboBoxItem Content="Accessoires"/><ComboBoxItem Content="Socle"/><ComboBoxItem Content="Armes"/></ComboBox></DockPanel>
               <TextBlock x:Name="PaintSelectionText" Text="0 triangle sélectionné" Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,0,0,5"/>
-              <WrapPanel><Button Click="ApplyPaintSelection_Click" Content="Appliquer la couleur"/><Button Click="ClearPaintSelection_Click" Content="Effacer"/></WrapPanel>
+              <WrapPanel><Button Click="ApplyPaintSelection_Click" Content="Appliquer la couleur"/><Button Click="ErasePaintSelection_Click" Content="Gomme"/><Button Click="PickPaintColor_Click" Content="Pipette"/><Button Click="FillVisibleRegion_Click" Content="Remplir l’îlot"/><Button Click="ResetColoring_Click" Content="Réinitialiser import"/><Button Click="ClearPaintSelection_Click" Content="Effacer"/></WrapPanel>
             </StackPanel>
           </Border>
           <TextBlock x:Name="PatternText" Visibility="Collapsed"/>

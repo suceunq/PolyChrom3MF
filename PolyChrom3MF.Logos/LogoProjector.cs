@@ -239,13 +239,33 @@ public sealed class LogoProjector
         if (string.IsNullOrWhiteSpace(instance.Name) || instance.Name.Length > 260)
             throw new InvalidDataException("Nom du logo invalide.");
         if (instance.FilamentIndex is < 0 or > 31) throw new InvalidDataException("Indice de filament invalide.");
+        if (instance.ColorHex.Length != 7 || instance.ColorHex[0] != '#' ||
+            !instance.ColorHex.AsSpan(1).ToArray().All(Uri.IsHexDigit))
+            throw new InvalidDataException("Couleur du logo invalide.");
         var transform = instance.Transform;
         if (!float.IsFinite(transform.WidthMm) || !float.IsFinite(transform.HeightMm) ||
             transform.WidthMm <= 0 || transform.HeightMm <= 0)
             throw new InvalidDataException("Dimensions du logo invalides.");
+        if (!Enum.IsDefined(transform.Projection) ||
+            !float.IsFinite(transform.RotationDegrees) ||
+            !float.IsFinite(transform.TiltXDegrees) ||
+            !float.IsFinite(transform.TiltYDegrees) ||
+            !float.IsFinite(transform.OffsetUmm) ||
+            !float.IsFinite(transform.OffsetVmm) ||
+            !float.IsFinite(transform.ReliefMm) ||
+            transform.Anchor.ObjectIndex < 0 ||
+            transform.Anchor.TriangleIndex < 0 ||
+            !IsFinite(transform.Anchor.Position) ||
+            !IsFinite(transform.Anchor.Normal) ||
+            !IsFinite(transform.Anchor.Tangent) ||
+            !IsFinite(transform.Anchor.Bitangent))
+            throw new InvalidDataException("Transformation du logo invalide.");
         if (transform.Anchor.Normal.LengthSquared() < .5f ||
             transform.Anchor.Tangent.LengthSquared() < .5f ||
             transform.Anchor.Bitangent.LengthSquared() < .5f)
             throw new InvalidDataException("Repère de surface invalide.");
     }
+
+    static bool IsFinite(Vector3 value) =>
+        float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
 }

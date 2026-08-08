@@ -28,6 +28,8 @@ public partial class MainWindow : Window
     // The voxel LOD preserves the overall shape while avoiding camera lag.
     const long FullDetailTriangleLimit = 500_000;
     const int LargeModelPreviewTarget = 300_000;
+    const long MaxPaintRefinementTriangles = 750_000;
+    const long MaxPaintRefinementGrowth = 250_000;
     // The legacy placement pipeline remains unreachable. Version 2.1 uses the
     // isolated, tested PolyChrom3MF.Logos engine behind the new workflow.
     static readonly bool ImageImportModuleEnabled = true;
@@ -54,8 +56,16 @@ public partial class MainWindow : Window
     readonly Dictionary<GeometryModel3D, Dictionary<(int A, int B, int C), int>> _renderTriangleLookup = [];
     readonly Dictionary<int, double> _objectDiagonals = [];
     readonly Dictionary<int, HashSet<int>> _paintSelection = [];
+    readonly Dictionary<int, HashSet<int>> _heightRangePreview = [];
+    readonly Dictionary<int, HashSet<int>> _hoverTrianglePreview = [];
+    readonly HashSet<(int ObjectIndex, int TriangleIndex)> _triangleStrokePainted = [];
+    DateTime _lastHeightPreviewUpdate = DateTime.MinValue;
     readonly Dictionary<int, Dictionary<(int A, int B, int C), int>> _triangleLookup = [];
     readonly List<System.Windows.Point> _paintStrokePoints = [];
+    // A brush is first used to identify the small part of the source mesh that
+    // needs resolution.  After local refinement it is evaluated again, so only
+    // the refined fragments inside the visible stroke receive a colour.
+    Func<ModelDocument, Dictionary<int, HashSet<int>>>? _pendingPrecisePaint;
     readonly Stack<EditorState> _undo = [];
     readonly Stack<EditorState> _redo = [];
     AppSettings _settings;
@@ -71,6 +81,7 @@ public partial class MainWindow : Window
     PatternSettings? _pattern;
     PatternWindow? _activePatternEditor;
     System.Windows.Point _last;
+    System.Windows.Point? _queuedTrianglePaintPoint;
     System.Windows.Point _mouseDownPoint;
     Vector _navigationVelocity;
     string? _patternGizmoMode;
@@ -78,7 +89,8 @@ public partial class MainWindow : Window
     System.Windows.Point _patternGizmoCenter;
     Point3D? _patternGizmoWorldPoint;
     double _yaw = -40, _pitch = -25, _zoom = 1;
-    bool _grid, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _paintModeBeforePattern, _shutdownForUpdate, _navigationMoved;
+    bool _grid, _perspective = true, _dirty, _loadingControls, _funMode = true, _automaticUpdateChecked, _paintStroke, _trianglePaintStroke, _trianglePaintBusy, _paintModeBeforePattern, _shutdownForUpdate, _navigationMoved;
+    bool _triangleStrokeUndoCaptured;
     int _generation, _colorCount = 4;
     int _lastSelectionObject = -1, _lastSelectionTriangle = -1;
     string? _lastSlicerFile;
@@ -157,13 +169,60 @@ public partial class MainWindow : Window
             ObjectsList.ItemsSource = _doc.Objects;
             ObjectsList.SelectedIndex = 0;
             _generation = 0;
-            GenerateProposals();
+            // Import must never silently apply the user's palette.  Proposals
+            // remain available, but selecting one is an explicit user action.
+            var preserveOriginal = true;
+            if (preserveOriginal && _doc.OriginalColors is { Count: > 0 } && _doc.OriginalTriangleAssignments is { Count: > 0 })
+            {
+                // File has original colors → show them first, with proposals in background
+                GenerateProposals();
+                var originalProposal = new ColorProposal(
+                    "Couleurs d'origine",
+                    $"{_doc.OriginalColors.Count} couleur(s) conservée(s) du fichier importé",
+                    _doc.OriginalColors,
+                    _doc.Objects.ToDictionary(o => o.Index, _ => 0))
+                {
+                    TriangleAssignments = _doc.OriginalTriangleAssignments
+                };
+                _proposals.Insert(0, originalProposal);
+                _layerBases.Insert(0, Clone(originalProposal));
+                _proposalLayers.Insert(0, new List<ColorLayer> { _layerService.Create("Couleur de base", ColorLayerKind.BaseColor) });
+                ProposalsTitle.Text = $"1 ORIGINALE + 4 PROPOSITIONS · {_colorCount} COULEURS";
+                SelectProposal(0);
+                Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals;
+            }
+            else if (preserveOriginal)
+            {
+                // No original colors in file → show neutral gray, don't auto-generate proposals
+                var neutralColor = new PaletteColor("Neutre", "#C0C0C0");
+                var neutralProposal = new ColorProposal(
+                    "Import neutre",
+                    "Aucune couleur détectée — modèle affiché tel quel",
+                    new List<PaletteColor> { neutralColor },
+                    _doc.Objects.ToDictionary(o => o.Index, _ => 0));
+                _proposals = new List<ColorProposal> { neutralProposal };
+                _layerBases = new List<ColorProposal> { Clone(neutralProposal) };
+                _proposalLayers = new List<List<ColorLayer>> { new() { _layerService.Create("Couleur de base", ColorLayerKind.BaseColor) } };
+                ProposalsTitle.Text = "IMPORT NEUTRE · Aucune palette appliquée";
+                SelectProposal(0);
+                Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals;
+                ApplyButton.IsEnabled = true;
+                StatusText.Text = "Modèle importé sans coloration. Utilisez Régénérer pour créer des propositions.";
+            }
+            else
+            {
+                GenerateProposals();
+            }
             HintText.Visibility = Visibility.Collapsed;
             StatsText.Text = $"{_doc.Objects.Count} objets · {_doc.TriangleCount:N0} triangles · {_selected?.Colors.Count ?? 0} couleurs";
             RecenterView();
             _dirty = false;
             _undo.Clear(); _redo.Clear();
-            StatusText.Text = _doc.Warning ?? "Analyse terminée.";
+            StatusText.Text = _doc.Warning ?? (preserveOriginal
+                ? (_doc.OriginalColors is { Count: > 0 }
+                    ? "Couleurs d'origine conservées. Cliquez sur une proposition pour appliquer une palette."
+                    : "Modèle importé sans coloration. Utilisez Régénérer pour créer des propositions.")
+                : "Analyse terminée.");
             return true;
         }
         catch (Exception ex)
@@ -215,7 +274,7 @@ public partial class MainWindow : Window
     void GenerateProposals()
     {
         if (_doc is null) return;
-        _pattern = null; _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText();
+        _pattern = null; _paintSelection.Clear(); HidePaintStrokeFill(); UpdatePatternText(); UpdatePaintSelectionText();
         var custom = UseFilaments.IsChecked == true ? _settings.FilamentColors : null;
         _proposals = _palettes.Create(_doc, custom, _generation, _funMode, _colorCount);
         ResetLayers();
@@ -1486,6 +1545,7 @@ public partial class MainWindow : Window
         {
             _paintStroke = false;
             Viewer?.ReleaseMouseCapture();
+            HidePaintStrokeFill();
         }
         else if (_doc is not null && _doc.TriangleCount > FullDetailTriangleLimit && _previewMeshes.Count == 0)
         {
@@ -1498,11 +1558,17 @@ public partial class MainWindow : Window
         StatusText.Text = enabled ? "Mode zones actif : choisissez Face par face ou Pinceau fluide. Clic droit pour tourner." : "Sélection de zones désactivée.";
     }
 
-    void PaintTool_Changed(object sender, SelectionChangedEventArgs e) => UpdateBrushCursorVisibility();
+    void PaintTool_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        _heightRangePreview.Clear();
+        _hoverTrianglePreview.Clear();
+        UpdateBrushCursorVisibility();
+        Render();
+    }
     void UpdateBrushCursorVisibility()
     {
         if (PaintBrushCursor is null || PaintMode is null || PaintTool is null) return;
-        PaintBrushCursor.Visibility = PaintMode.IsChecked == true && PaintTool.SelectedIndex == 1 && Viewer.IsMouseOver ? Visibility.Visible : Visibility.Collapsed;
+        PaintBrushCursor.Visibility = PaintMode.IsChecked == true && PaintTool.SelectedIndex is 1 or 4 && Viewer.IsMouseOver ? Visibility.Visible : Visibility.Collapsed;
     }
 
     async Task SelectPaintZone(RayMeshGeometry3DHitTestResult hit, GeometryModel3D model)
@@ -1513,12 +1579,20 @@ public partial class MainWindow : Window
         if (sourceTriangle < 0) return;
         _lastSelectionObject = objectIndex;
         _lastSelectionTriangle = sourceTriangle;
-        var brushScale = PaintTool.SelectedIndex == 0 ? 0 : PaintBrushSize.SelectedIndex switch { 0 => .0015, 1 => .003, 2 => .008, 3 => .02, _ => .05 };
+        var brushScale = PaintTool.SelectedIndex is 0 or 5 ? 0 : PaintBrushSize.SelectedIndex switch { 0 => .0015, 1 => .003, 2 => .008, 3 => .02, _ => .05 };
         SetBusy(true, "Sélection de la zone…");
         try
         {
             HashSet<int> selected;
-            if (brushScale == 0) selected = [sourceTriangle];
+            if (PaintTool.SelectedIndex == 5)
+            {
+                var diagonal = _objectDiagonals.GetValueOrDefault(obj.Index, _radius * 2);
+                var halfRange = Math.Max(.001, diagonal * PaintHeightRange.Value / 100d / 2d);
+                selected = obj.Triangles.Select((triangle, index) => (triangle, index))
+                    .Where(item => Math.Abs((obj.Vertices[item.triangle.A].Z + obj.Vertices[item.triangle.B].Z + obj.Vertices[item.triangle.C].Z) / 3d - hit.PointHit.Z) <= halfRange)
+                    .Select(item => item.index).ToHashSet();
+            }
+            else if (brushScale == 0) selected = [sourceTriangle];
             else
             {
                 var diagonal = _objectDiagonals.GetValueOrDefault(obj.Index, _radius * 2);
@@ -1578,12 +1652,28 @@ public partial class MainWindow : Window
         return (a, b, c);
     }
 
-    async void ApplyPaintSelection_Click(object sender, RoutedEventArgs e)
+    async void ApplyPaintSelection_Click(object sender, RoutedEventArgs e) => await CommitPaintSelectionAsync();
+
+    async Task<bool> CommitPaintSelectionAsync(bool captureUndo = true)
     {
-        if (_doc is null || _selected is null || _selected.Colors.Count == 0 || _paintSelection.Count == 0) { MessageBox.Show("Activez la sélection de zones et cliquez sur le modèle avant d’appliquer une couleur.", "Coloration manuelle"); return; }
-        var colorIndex = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1); PushUndo();
+        if (_doc is null || _selected is null || _selected.Colors.Count == 0 || _paintSelection.Count == 0) { MessageBox.Show("Activez la sélection de zones et cliquez sur le modèle avant d’appliquer une couleur.", "Coloration manuelle"); return false; }
+        var selectedLayer = SelectedLayer();
+        if (selectedLayer is { Kind: not ColorLayerKind.BaseColor, IsLocked: true })
+        {
+            MessageBox.Show("Ce calque est verrouillé.", "Coloration manuelle");
+            return false;
+        }
+        var colorIndex = Math.Clamp(PaintColorCombo.SelectedIndex, 0, _selected.Colors.Count - 1);
+        if (captureUndo) PushUndo();
         var proposalIndex = SelectedProposalIndex();
-        var levels = _doc.TriangleCount switch { < 200_000 => 2, < 2_000_000 => 1, _ => 0 };
+        var selectionCount = _paintSelection.Values.Sum(set => set.Count);
+        // Aggressive local subdivision under the brush — makes painted boundaries smooth
+        // like in Orca/Bambu Studio. Levels are capped by selection size to keep performance.
+        // The Triangle tool intentionally paints one existing face. Refining
+        // it into 1,024 children provides no precision benefit and used to
+        // destabilise the next click. Local refinement is reserved for
+        // continuous tools (circle, sphere, rectangle and lasso).
+        var levels = PaintRefinementLevels(_doc.TriangleCount, selectionCount, PaintTool.SelectedIndex);
         if (levels > 0)
         {
             SetBusy(true, "Subdivision locale sous la zone peinte…");
@@ -1591,12 +1681,31 @@ public partial class MainWindow : Window
             {
                 var refinement = await Task.Run(() => _localRefinement.Refine(_doc, _proposals, _layerBases, _proposalLayers, _paintSelection, levels));
                 _doc = refinement.Document; _proposals = refinement.Proposals; _layerBases = refinement.Bases; _proposalLayers = refinement.Layers;
+                // Topology changed: cached vertex-triplet → triangle indexes
+                // belong to the previous mesh and would make every following
+                // click target the wrong face (or none at all).
+                _triangleLookup.Clear();
+                _renderTriangleLookup.Clear();
+                ObjectsList.ItemsSource = _doc.Objects;
+                ObjectsList.SelectedIndex = Math.Clamp(ObjectsList.SelectedIndex, 0, Math.Max(0, _doc.Objects.Count - 1));
                 _paintSelection.Clear(); foreach (var pair in refinement.Selection) _paintSelection[pair.Key] = pair.Value;
-                SelectProposal(proposalIndex); ComputeBounds();
+                // Subdivision only inserts points on existing edges; it never
+                // changes the bounding box. Do not recompute bounds here: that
+                // would reset the current camera target after every stroke.
+                SelectProposal(proposalIndex);
                 if (refinement.AddedTriangles > 0) StatusText.Text = $"{refinement.AddedTriangles:N0} triangles ajoutés uniquement sous la peinture.";
             }
             finally { SetBusy(false); }
         }
+        if (_pendingPrecisePaint is { } precisePaint)
+        {
+            // Do not turn every coarse source face touched by the cursor into a
+            // solid block.  Re-evaluate the same visible stroke on the locally
+            // subdivided mesh; this is the committed paint mask.
+            _paintSelection.Clear();
+            foreach (var pair in precisePaint(_doc!)) _paintSelection[pair.Key] = pair.Value;
+        }
+        _pendingPrecisePaint = null;
         _selected = _proposals[proposalIndex];
         var layer = SelectedLayer();
         if (layer is null || layer.Kind == ColorLayerKind.BaseColor)
@@ -1604,7 +1713,7 @@ public partial class MainWindow : Window
             layer = _layerService.Create($"Peinture {_proposalLayers[proposalIndex].Count}", ColorLayerKind.Paint);
             _proposalLayers[proposalIndex].Add(layer);
         }
-        if (layer.IsLocked) { MessageBox.Show("Ce calque est verrouillé.", "Coloration manuelle"); return; }
+        if (layer.IsLocked) { MessageBox.Show("Ce calque est verrouillé.", "Coloration manuelle"); return false; }
         foreach (var pair in _paintSelection)
         {
             var obj = _doc!.Objects.First(item => item.Index == pair.Key);
@@ -1618,14 +1727,148 @@ public partial class MainWindow : Window
         }
         var count = _paintSelection.Values.Sum(set => set.Count);
         _paintSelection.Clear();
+        HidePaintStrokeFill();
         UpdatePaintSelectionText();
         RecomposeSelected();
         RefreshLayers();
         _dirty = true;
         StatusText.Text = $"{_selected.Colors[colorIndex].Name} appliquée sur {count:N0} triangles dans le calque « {layer.Name} ».";
+        return true;
     }
 
-    void ClearPaintSelection_Click(object sender, RoutedEventArgs e) { _paintSelection.Clear(); UpdatePaintSelectionText(); Render(); StatusText.Text = "Sélection de zones effacée."; }
+    internal static int PaintRefinementLevels(long triangleCount, int selectionCount, int toolIndex)
+    {
+        if (toolIndex == 0 || triangleCount < 0 || selectionCount <= 0) return 0;
+        var levels = selectionCount switch
+        {
+            < 500 => triangleCount < 200_000 ? 5 : 4,
+            < 2000 => triangleCount < 200_000 ? 4 : 3,
+            < 10000 => 3,
+            _ => 2
+        };
+        var availableGrowth = Math.Min(MaxPaintRefinementGrowth, Math.Max(0, MaxPaintRefinementTriangles - triangleCount));
+        while (levels > 0)
+        {
+            var childrenPerTriangle = 1L << (levels * 2);
+            var estimatedGrowth = (long)selectionCount * (childrenPerTriangle - 1);
+            if (estimatedGrowth <= availableGrowth) break;
+            levels--;
+        }
+        return levels;
+    }
+
+    void ClearPaintSelection_Click(object sender, RoutedEventArgs e) { _paintSelection.Clear(); HidePaintStrokeFill(); UpdatePaintSelectionText(); Render(); StatusText.Text = "Sélection de zones effacée."; }
+
+    void ErasePaintSelection_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _paintSelection.Count == 0) { StatusText.Text = "Sélectionnez une zone à gommer."; return; }
+        var proposalIndex = SelectedProposalIndex();
+        var layer = SelectedLayer();
+        if (proposalIndex < 0 || layer is null || layer.Kind == ColorLayerKind.BaseColor || layer.IsLocked)
+        {
+            MessageBox.Show("Sélectionnez d’abord un calque de peinture non verrouillé.", "Gomme");
+            return;
+        }
+        PushUndo();
+        var erased = 0;
+        foreach (var pair in _paintSelection)
+            if (layer.TriangleOverrides.TryGetValue(pair.Key, out var values))
+                foreach (var triangle in pair.Value.Where(index => index >= 0 && index < values.Length)) { values[triangle] = -1; erased++; }
+        _paintSelection.Clear(); HidePaintStrokeFill(); UpdatePaintSelectionText(); RecomposeSelected(); RefreshLayers(); _dirty = true;
+        StatusText.Text = $"Gomme : {erased:N0} fragment(s) restauré(s) depuis le calque inférieur.";
+    }
+
+    void PickPaintColor_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _selected is null || _lastSelectionObject < 0 || _lastSelectionTriangle < 0) { StatusText.Text = "Cliquez d’abord sur une face avec l’outil Face par face."; return; }
+        var composed = FinalProposal(SelectedProposalIndex());
+        if (!composed.TriangleAssignments.TryGetValue(_lastSelectionObject, out var values) || _lastSelectionTriangle >= values.Length) return;
+        PaintColorCombo.SelectedIndex = Math.Clamp(values[_lastSelectionTriangle], 0, _selected.Colors.Count - 1);
+        StatusText.Text = $"Pipette : {_selected.Colors[PaintColorCombo.SelectedIndex].Name}.";
+    }
+
+    async void FillVisibleRegion_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null || _lastSelectionObject < 0 || _lastSelectionTriangle < 0) { StatusText.Text = "Cliquez d’abord sur une face de l’îlot à remplir."; return; }
+        var obj = _doc.Objects.FirstOrDefault(item => item.Index == _lastSelectionObject);
+        if (obj is null) return;
+        SetBusy(true, "Recherche de l’îlot visible…");
+        try
+        {
+            var island = await Task.Run(() => _smartSelection.ConnectedIsland(obj, _lastSelectionTriangle));
+            _paintSelection[obj.Index] = island;
+            await CommitPaintSelectionAsync();
+        }
+        finally { SetBusy(false); }
+    }
+
+    void UpdateHeightRangePreview(System.Windows.Point point)
+    {
+        if (_doc is null || DateTime.UtcNow - _lastHeightPreviewUpdate < TimeSpan.FromMilliseconds(180)) return;
+        _lastHeightPreviewUpdate = DateTime.UtcNow;
+        RayMeshGeometry3DHitTestResult? surface = null;
+        GeometryModel3D? geometry = null;
+        VisualTreeHelper.HitTest(Viewer, null, result =>
+        {
+            if (result is RayMeshGeometry3DHitTestResult hit && hit.ModelHit is GeometryModel3D model && _modelObjects.ContainsKey(model))
+            {
+                surface = hit; geometry = model;
+                return HitTestResultBehavior.Stop;
+            }
+            return HitTestResultBehavior.Continue;
+        }, new PointHitTestParameters(point));
+        if (surface is null || geometry is null || !_modelObjects.TryGetValue(geometry, out var objectIndex)) return;
+        var obj = _doc.Objects.FirstOrDefault(item => item.Index == objectIndex);
+        if (obj is null) return;
+        var diagonal = _objectDiagonals.GetValueOrDefault(obj.Index, _radius * 2);
+        var halfRange = Math.Max(.001, diagonal * PaintHeightRange.Value / 100d / 2d);
+        var projection = CapturePaintProjection();
+        if (projection is null) return;
+        var preview = SelectVisibleTrianglesByHeight(_doc, obj.Index, surface.PointHit.Z, halfRange, projection.Value);
+        if (_heightRangePreview.Count == 1 && _heightRangePreview.TryGetValue(obj.Index, out var existing) && existing.SetEquals(preview)) return;
+        _heightRangePreview.Clear();
+        if (preview.Count > 0) _heightRangePreview[obj.Index] = preview;
+        Render();
+        StatusText.Text = $"Aperçu de la plage de hauteur : {preview.Count:N0} triangles. Cliquez pour sélectionner, puis appliquez la couleur.";
+    }
+
+    void UpdateTrianglePreview(System.Windows.Point point)
+    {
+        RayMeshGeometry3DHitTestResult? surface = null;
+        GeometryModel3D? geometry = null;
+        VisualTreeHelper.HitTest(Viewer, null, result =>
+        {
+            if (result is RayMeshGeometry3DHitTestResult hit && hit.ModelHit is GeometryModel3D model && _modelObjects.ContainsKey(model))
+            {
+                surface = hit; geometry = model;
+                return HitTestResultBehavior.Stop;
+            }
+            return HitTestResultBehavior.Continue;
+        }, new PointHitTestParameters(point));
+        if (_doc is null || surface is null || geometry is null || !_modelObjects.TryGetValue(geometry, out var objectIndex)) return;
+        var obj = _doc.Objects.FirstOrDefault(item => item.Index == objectIndex);
+        if (obj is null) return;
+        var triangle = FindSourceTriangle(obj, surface);
+        if (triangle < 0) return;
+        if (_hoverTrianglePreview.TryGetValue(objectIndex, out var current) && current.SetEquals([triangle])) return;
+        _hoverTrianglePreview.Clear();
+        _hoverTrianglePreview[objectIndex] = [triangle];
+        Render();
+        StatusText.Text = "Aperçu : cliquez pour appliquer directement la couleur choisie à ce triangle.";
+    }
+
+    async void ResetColoring_Click(object sender, RoutedEventArgs e)
+    {
+        if (_doc is null) return;
+        var source = _doc.Path;
+        if (!File.Exists(source))
+        {
+            MessageBox.Show("Le fichier importé d’origine n’est plus accessible. Réouvrez-le pour réinitialiser sa coloration.", "Réinitialiser la coloration", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (MessageBox.Show("Retrouver exactement les couleurs et le maillage du fichier importé ? Les calques de peinture actuels seront retirés.", "Réinitialiser la coloration", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            await LoadModel(source);
+    }
 
     async void SmartSelect_Click(object sender, RoutedEventArgs e)
     {
@@ -1895,12 +2138,20 @@ public partial class MainWindow : Window
     void Restore(EditorState state) { _generation = state.Generation; _funMode = state.FunMode; _colorCount = state.ColorCount; _pattern = state.Pattern; _doc = state.Document; _logoProject = CloneLogoProject(state.Logos); _logoBaseProposals = state.LogoBases?.Select(Clone).ToList(); _paintSelection.Clear(); UpdatePatternText(); UpdatePaintSelectionText(); ProposalsTitle.Text = $"4 PROPOSITIONS · {_colorCount} COULEURS"; _loadingControls = true; FunMode.IsChecked = _funMode; _loadingControls = false; _proposals = state.Proposals.Select(Clone).ToList(); _layerBases = state.LayerBases.Select(Clone).ToList(); _proposalLayers = CloneLayers(state.Layers); SelectProposal(state.Selected); RefreshBindings(); ComputeBounds(); Render(); _dirty = true; }
     void Undo_Click(object sender, RoutedEventArgs e) { if (_undo.Count == 0) return; _redo.Push(Capture()); Restore(_undo.Pop()); StatusText.Text = "Modification annulée."; }
     void Redo_Click(object sender, RoutedEventArgs e) { if (_redo.Count == 0) return; _undo.Push(Capture()); Restore(_redo.Pop()); StatusText.Text = "Modification rétablie."; }
-    void RefreshBindings() { Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals; ObjectColorCombo.ItemsSource = null; ObjectColorCombo.ItemsSource = _selected?.Colors; PaintColorCombo.ItemsSource = null; PaintColorCombo.ItemsSource = _selected?.Colors; if (_selected is not null && _selected.Colors.Count > 0) PaintColorCombo.SelectedIndex = 0; }
+    void RefreshBindings()
+    {
+        var selectedPaintColor = PaintColorCombo.SelectedIndex;
+        Proposals.ItemsSource = null; Proposals.ItemsSource = _proposals;
+        ObjectColorCombo.ItemsSource = null; ObjectColorCombo.ItemsSource = _selected?.Colors;
+        PaintColorCombo.ItemsSource = null; PaintColorCombo.ItemsSource = _selected?.Colors;
+        if (_selected is not null && _selected.Colors.Count > 0)
+            PaintColorCombo.SelectedIndex = Math.Clamp(selectedPaintColor < 0 ? 0 : selectedPaintColor, 0, _selected.Colors.Count - 1);
+    }
 
     void BuildScene()
     {
-        Viewer.Children.Add(new ModelVisual3D { Content = new AmbientLight(Color.FromRgb(145, 145, 145)) });
-        Viewer.Children.Add(new ModelVisual3D { Content = new DirectionalLight(Colors.White, new Vector3D(-1, -1, -2)) });
+        Viewer.Children.Add(new ModelVisual3D { Content = new AmbientLight(Color.FromRgb(55, 55, 55)) });
+        Viewer.Children.Add(new ModelVisual3D { Content = new DirectionalLight(Color.FromRgb(220, 220, 220), new Vector3D(-1, -1, -2)) });
         UpdateCamera();
     }
 
@@ -2118,6 +2369,35 @@ public partial class MainWindow : Window
             var renderTriangleCount = preview?.Triangles.Count ?? obj.Triangles.Count;
             var positions = new Point3DCollection(renderVertices.Select(v => new Point3D(v.X, v.Y, v.Z)));
             positions.Freeze();
+
+            // Compute per-vertex normals for smooth shading (averaged face normals).
+            // This eliminates the "flat triangle" look and makes painted areas appear smooth.
+            var normalSums = new Vector3D[renderVertices.Count];
+            var fullTriangleCount = preview?.Triangles.Count ?? obj.Triangles.Count;
+            for (var ti = 0; ti < fullTriangleCount; ti++)
+            {
+                var pt = preview?.Triangles[ti];
+                var t = pt is null ? obj.Triangles[ti] : new Triangle(pt.A, pt.B, pt.C);
+                if (t.A >= renderVertices.Count || t.B >= renderVertices.Count || t.C >= renderVertices.Count) continue;
+                var va = renderVertices[t.A]; var vb = renderVertices[t.B]; var vc = renderVertices[t.C];
+                var faceNormal = Vector3D.CrossProduct(
+                    new Vector3D(vb.X - va.X, vb.Y - va.Y, vb.Z - va.Z),
+                    new Vector3D(vc.X - va.X, vc.Y - va.Y, vc.Z - va.Z));
+                if (faceNormal.LengthSquared < 1e-12) continue;
+                faceNormal.Normalize();
+                normalSums[t.A] += faceNormal;
+                normalSums[t.B] += faceNormal;
+                normalSums[t.C] += faceNormal;
+            }
+            var normals = new Vector3DCollection(renderVertices.Count);
+            for (var ni = 0; ni < normalSums.Length; ni++)
+            {
+                var n = normalSums[ni];
+                if (n.LengthSquared > 1e-12) n.Normalize();
+                else n = new Vector3D(0, 0, 1);
+                normals.Add(n);
+            }
+            normals.Freeze();
             var triangleColors = _selected?.TriangleAssignments.GetValueOrDefault(obj.Index);
             var colorCount = Math.Max(1, _selected?.Colors.Count ?? 1);
             var capacity = Math.Max(3, renderTriangleCount * 3 / colorCount);
@@ -2132,7 +2412,10 @@ public partial class MainWindow : Window
                 var triangle = previewTriangle is null
                     ? obj.Triangles[renderTriangleIndex]
                     : new Triangle(previewTriangle.A, previewTriangle.B, previewTriangle.C);
-                if (_paintSelection.TryGetValue(obj.Index, out var selectedTriangles) && selectedTriangles.Contains(sourceTriangleIndex))
+                var isSelected = _paintSelection.TryGetValue(obj.Index, out var selectedTriangles) && selectedTriangles.Contains(sourceTriangleIndex);
+                var isHeightPreview = !isSelected && _heightRangePreview.TryGetValue(obj.Index, out var previewTriangles) && previewTriangles.Contains(sourceTriangleIndex);
+                var isTrianglePreview = !isSelected && !isHeightPreview && _hoverTrianglePreview.TryGetValue(obj.Index, out var hoverTriangles) && hoverTriangles.Contains(sourceTriangleIndex);
+                if (isSelected || isHeightPreview || isTrianglePreview)
                 {
                     selectedIndices.Add(triangle.A); selectedIndices.Add(triangle.B); selectedIndices.Add(triangle.C);
                     if (selectedLookup is not null) selectedLookup[TriangleKey(triangle.A, triangle.B, triangle.C)] = sourceTriangleIndex;
@@ -2147,39 +2430,31 @@ public partial class MainWindow : Window
             {
                 if (indicesByColor[colorIndex].Count == 0) continue;
                 indicesByColor[colorIndex].Freeze();
-                var mesh = new MeshGeometry3D { Positions = positions, TriangleIndices = indicesByColor[colorIndex] };
+                var mesh = new MeshGeometry3D { Positions = positions, Normals = normals, TriangleIndices = indicesByColor[colorIndex] };
                 mesh.Freeze();
                 var color = _selected?.Colors.ElementAtOrDefault(colorIndex)?.Color ?? Colors.SlateGray;
-                var isSelectedObject = ObjectsList.SelectedItem is ModelObject selectedObject && selectedObject.Index == obj.Index;
-                if (isSelectedObject) color = Color.Multiply(color, 1.22f);
                 var brush = new SolidColorBrush(color); brush.Freeze();
-                Material material;
-                if (isSelectedObject)
-                {
-                    var diffuse = new DiffuseMaterial(brush); diffuse.Freeze();
-                    var glowBrush = new SolidColorBrush(Color.FromArgb(72, 60, 170, 255)); glowBrush.Freeze();
-                    var glow = new EmissiveMaterial(glowBrush); glow.Freeze();
-                    var selectedMaterial = new MaterialGroup();
-                    selectedMaterial.Children.Add(diffuse);
-                    selectedMaterial.Children.Add(glow);
-                    selectedMaterial.Freeze();
-                    material = selectedMaterial;
-                }
-                else
-                {
-                    var diffuse = new DiffuseMaterial(brush); diffuse.Freeze();
-                    material = diffuse;
-                }
+                // Do not tint the complete selected object. The former blue
+                // emissive highlight turned imported black into navy and faded
+                // reds, so the preview no longer matched the slicer.
+                var diffuse = new DiffuseMaterial(brush); diffuse.Freeze();
+                Material material = diffuse;
                 var model = new GeometryModel3D(mesh, material) { BackMaterial = material };
                 _modelObjects[model] = obj.Index;
                 if (lookupByColor is not null) _renderTriangleLookup[model] = lookupByColor[colorIndex];
                 Viewer.Children.Add(new ModelVisual3D { Content = model });
             }
-            if (selectedIndices.Count > 0)
+            if (selectedIndices.Count > 0 && PaintStrokeFill.Visibility != Visibility.Visible)
             {
-                selectedIndices.Freeze(); var selectionMesh = new MeshGeometry3D { Positions = positions, TriangleIndices = selectedIndices }; selectionMesh.Freeze();
-                var selectionBrush = new SolidColorBrush(Color.FromRgb(255, 211, 45)); selectionBrush.Freeze(); var selectionMaterial = new DiffuseMaterial(selectionBrush); selectionMaterial.Freeze();
-                var selectionModel = new GeometryModel3D(selectionMesh, selectionMaterial) { BackMaterial = selectionMaterial }; _modelObjects[selectionModel] = obj.Index;
+                selectedIndices.Freeze(); var selectionMesh = new MeshGeometry3D { Positions = positions, Normals = normals, TriangleIndices = selectedIndices }; selectionMesh.Freeze();
+                // Semi-transparent golden glow — blends smoothly instead of showing hard triangle edges
+                var glowBrush = new SolidColorBrush(Color.FromArgb(100, 255, 211, 45)); glowBrush.Freeze();
+                var baseBrush = new SolidColorBrush(Color.FromArgb(140, 60, 45, 15)); baseBrush.Freeze();
+                var selectionGroup = new MaterialGroup();
+                selectionGroup.Children.Add(new DiffuseMaterial(baseBrush));
+                selectionGroup.Children.Add(new EmissiveMaterial(glowBrush));
+                selectionGroup.Freeze();
+                var selectionModel = new GeometryModel3D(selectionMesh, selectionGroup) { BackMaterial = selectionGroup }; _modelObjects[selectionModel] = obj.Index;
                 if (selectedLookup is not null) _renderTriangleLookup[selectionModel] = selectedLookup;
                 Viewer.Children.Add(new ModelVisual3D { Content = selectionModel });
             }
@@ -2288,17 +2563,28 @@ public partial class MainWindow : Window
         }
         if (PaintMode.IsChecked == true && e.ChangedButton == MouseButton.Left)
         {
-            if (PaintTool.SelectedIndex >= 1)
+            if (PaintTool.SelectedIndex == 5)
+            {
+                await SelectPaintFromView(_last);
+            }
+            else if (PaintTool.SelectedIndex == 0)
+            {
+                Viewer.CaptureMouse();
+                _trianglePaintStroke = true;
+                _triangleStrokeUndoCaptured = false;
+                _triangleStrokePainted.Clear();
+                await PaintTriangleAt(_last);
+            }
+            else if (PaintTool.SelectedIndex >= 1)
             {
                 Viewer.CaptureMouse();
                 _paintStroke = true;
                 _paintStrokePoints.Clear();
                 _paintStrokePoints.Add(_last);
                 PaintStrokePreview.Points = new PointCollection([_last]);
-                PaintStrokePreview.StrokeThickness = PaintTool.SelectedIndex == 1 ? BrushRadiusPixels() * 2 : 2;
+                PaintStrokePreview.StrokeThickness = PaintTool.SelectedIndex is 1 or 4 ? BrushRadiusPixels() * 2 : 2;
                 PaintStrokePreview.Visibility = Visibility.Visible;
             }
-            else await SelectPaintFromView(_last);
             e.Handled = true;
             return;
         }
@@ -2316,6 +2602,15 @@ public partial class MainWindow : Window
         var p = e.GetPosition(Viewer);
         UpdateBrushCursor(p);
         var paintMode = PaintMode.IsChecked == true;
+        if (paintMode && !_paintStroke && PaintTool.SelectedIndex == 5 && e.LeftButton != MouseButtonState.Pressed)
+            UpdateHeightRangePreview(p);
+        else if (paintMode && !_paintStroke && PaintTool.SelectedIndex == 0 && e.LeftButton != MouseButtonState.Pressed)
+            UpdateTrianglePreview(p);
+        if (paintMode && _trianglePaintStroke && e.LeftButton == MouseButtonState.Pressed)
+        {
+            _ = PaintTriangleAt(p);
+            return;
+        }
         if (paintMode && _paintStroke && e.LeftButton == MouseButtonState.Pressed)
         {
             if (PaintTool.SelectedIndex == 2)
@@ -2366,6 +2661,15 @@ public partial class MainWindow : Window
     }
     async void Viewer_MouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (e.ChangedButton == MouseButton.Left && _trianglePaintStroke)
+        {
+            _trianglePaintStroke = false;
+            _triangleStrokePainted.Clear();
+            _queuedTrianglePaintPoint = null;
+            Viewer.ReleaseMouseCapture();
+            e.Handled = true;
+            return;
+        }
         if (e.ChangedButton == MouseButton.Left && _paintStroke)
         {
             _paintStroke = false;
@@ -2383,7 +2687,7 @@ public partial class MainWindow : Window
                 try
                 {
                     var tool = PaintTool.SelectedIndex;
-                    var selection = await Task.Run(() => tool == 1
+                    var selection = await Task.Run(() => tool is 1 or 4
                         ? SelectTrianglesFromScreenStroke(document, points, brushRadius, projection)
                         : SelectTrianglesFromScreenRegion(document, points, tool == 2, projection));
                     foreach (var pair in selection)
@@ -2391,11 +2695,20 @@ public partial class MainWindow : Window
                         if (!_paintSelection.TryGetValue(pair.Key, out var current)) _paintSelection[pair.Key] = current = [];
                         current.UnionWith(pair.Value);
                     }
-                    UpdatePaintSelectionText();
-                    Render();
-                    StatusText.Text = selection.Count == 0
-                        ? "Le trait n’a rencontré aucune surface visible."
-                        : $"Sélection terminée · {_paintSelection.Values.Sum(set => set.Count):N0} triangles sélectionnés.";
+                    if (selection.Count == 0)
+                    {
+                        StatusText.Text = "Le trait n’a rencontré aucune surface visible.";
+                    }
+                    else
+                    {
+                        // Commit directly. The second projection runs only after
+                        // local subdivision and therefore preserves the circular
+                        // contour instead of the original large triangles.
+                        _pendingPrecisePaint = refined => tool is 1 or 4
+                            ? SelectTrianglesFromScreenStroke(refined, points, brushRadius, projection, precise: true)
+                            : SelectTrianglesFromScreenRegion(refined, points, tool == 2, projection, precise: true);
+                        await CommitPaintSelectionAsync();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -2403,6 +2716,7 @@ public partial class MainWindow : Window
                 }
                 finally
                 {
+                    _pendingPrecisePaint = null;
                     PaintStrokePreview.Visibility = Visibility.Collapsed;
                     PaintStrokePreview.Points.Clear();
                     SetBusy(false);
@@ -2733,11 +3047,12 @@ public partial class MainWindow : Window
     void Viewer_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (!_paintStroke && PaintBrushCursor is not null) PaintBrushCursor.Visibility = Visibility.Collapsed;
+        if (_heightRangePreview.Count > 0 || _hoverTrianglePreview.Count > 0) { _heightRangePreview.Clear(); _hoverTrianglePreview.Clear(); Render(); }
     }
 
     void UpdateBrushCursor(System.Windows.Point point)
     {
-        if (PaintBrushCursor is null || PaintMode.IsChecked != true || PaintTool.SelectedIndex != 1)
+        if (PaintBrushCursor is null || PaintMode.IsChecked != true || PaintTool.SelectedIndex is not (1 or 4))
         {
             if (PaintBrushCursor is not null) PaintBrushCursor.Visibility = Visibility.Collapsed;
             return;
@@ -2806,7 +3121,97 @@ public partial class MainWindow : Window
         if (selectedHit is not null && selectedModel is not null) await SelectPaintZone(selectedHit, selectedModel);
     }
 
+    async Task PaintTriangleAt(System.Windows.Point point)
+    {
+        if (_doc is null || _selected is null) return;
+        if (_trianglePaintBusy) { _queuedTrianglePaintPoint = point; return; }
+        RayMeshGeometry3DHitTestResult? hit = null;
+        GeometryModel3D? model = null;
+        VisualTreeHelper.HitTest(Viewer, null, result =>
+        {
+            if (result is RayMeshGeometry3DHitTestResult candidate && candidate.ModelHit is GeometryModel3D geometry && _modelObjects.ContainsKey(geometry))
+            {
+                hit = candidate; model = geometry;
+                return HitTestResultBehavior.Stop;
+            }
+            return HitTestResultBehavior.Continue;
+        }, new PointHitTestParameters(point));
+        if (hit is null || model is null || !_modelObjects.TryGetValue(model, out var objectIndex)) return;
+        var obj = _doc.Objects.FirstOrDefault(item => item.Index == objectIndex);
+        if (obj is null) return;
+        var triangle = FindSourceTriangle(obj, hit);
+        if (triangle < 0 || !_triangleStrokePainted.Add((objectIndex, triangle))) return;
+        _trianglePaintBusy = true;
+        try
+        {
+            _lastSelectionObject = objectIndex;
+            _lastSelectionTriangle = triangle;
+            _hoverTrianglePreview.Clear();
+            _paintSelection.Clear();
+            _paintSelection[objectIndex] = [triangle];
+            if (await CommitPaintSelectionAsync(captureUndo: !_triangleStrokeUndoCaptured))
+                _triangleStrokeUndoCaptured = true;
+        }
+        finally
+        {
+            _trianglePaintBusy = false;
+            if (_trianglePaintStroke && _queuedTrianglePaintPoint is System.Windows.Point queued)
+            {
+                _queuedTrianglePaintPoint = null;
+                await PaintTriangleAt(queued);
+            }
+        }
+    }
+
     double BrushRadiusPixels() => PaintBrushSize.SelectedIndex switch { 0 => 4d, 1 => 8d, 2 => 14d, 3 => 22d, _ => 32d };
+
+    void UpdatePaintStrokeFill(IReadOnlyList<System.Windows.Point> points)
+    {
+        if (PaintStrokeFill is null || points.Count < 2) return;
+        try
+        {
+            var radius = BrushRadiusPixels();
+            // Build a filled polygon from the stroke points by offsetting perpendicularly
+            var left = new List<System.Windows.Point>();
+            var right = new List<System.Windows.Point>();
+            for (var i = 0; i < points.Count; i++)
+            {
+                var prev = points[Math.Max(0, i - 1)];
+                var next = points[Math.Min(points.Count - 1, i + 1)];
+                var dirX = next.X - prev.X;
+                var dirY = next.Y - prev.Y;
+                var len = Math.Sqrt(dirX * dirX + dirY * dirY);
+                if (len < 0.01) { dirX = 1; dirY = 0; len = 1; }
+                var perpX = -dirY / len * radius;
+                var perpY = dirX / len * radius;
+                left.Add(new System.Windows.Point(points[i].X + perpX, points[i].Y + perpY));
+                right.Add(new System.Windows.Point(points[i].X - perpX, points[i].Y - perpY));
+            }
+            // Build polygon: left side forward + right side backward
+            var polygon = new PointCollection(left.Count + right.Count);
+            foreach (var pt in left) polygon.Add(pt);
+            for (var i = right.Count - 1; i >= 0; i--) polygon.Add(right[i]);
+
+            // Use selected paint color for the fill
+            var paintColor = _selected?.Colors.ElementAtOrDefault(
+                Math.Clamp(PaintColorCombo?.SelectedIndex ?? 0, 0, (_selected?.Colors.Count ?? 1) - 1));
+            var hex = paintColor?.Hex ?? "#FFD32D";
+            var c = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex);
+            var opacity = PaintPreviewOpacity is null ? .65 : PaintPreviewOpacity.Value / 100d;
+            PaintStrokeFill.Fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb((byte)Math.Clamp(255 * opacity, 0, 255), c.R, c.G, c.B));
+            PaintStrokeFill.Stroke = new SolidColorBrush(System.Windows.Media.Color.FromArgb((byte)Math.Clamp(255 * Math.Max(opacity, .8), 0, 255), c.R, c.G, c.B));
+            PaintStrokeFill.Points = polygon;
+            PaintStrokeFill.Visibility = Visibility.Visible;
+        }
+        catch { PaintStrokeFill.Visibility = Visibility.Collapsed; }
+    }
+
+    void HidePaintStrokeFill()
+    {
+        if (PaintStrokeFill is null) return;
+        PaintStrokeFill.Visibility = Visibility.Collapsed;
+        PaintStrokeFill.Points.Clear();
+    }
 
     internal static IReadOnlyList<System.Windows.Point> BrushStrokeCenters(System.Windows.Point from, System.Windows.Point to, double spacing)
     {
@@ -2836,7 +3241,8 @@ public partial class MainWindow : Window
         ModelDocument document,
         IReadOnlyList<System.Windows.Point> stroke,
         double radius,
-        PaintProjection projection)
+        PaintProjection projection,
+        bool precise = false)
     {
         var result = new Dictionary<int, HashSet<int>>();
         if (stroke.Count == 0 || radius <= 0 || projection.Width <= 0 || projection.Height <= 0) return result;
@@ -2867,6 +3273,7 @@ public partial class MainWindow : Window
 
         var nearestDepth = Enumerable.Repeat(double.PositiveInfinity, mask.Length).ToArray();
         var candidates = new List<PaintCandidate>();
+        var added = new HashSet<(int ObjectIndex, int TriangleIndex)>();
         foreach (var obj in document.Objects)
         {
             for (var triangleIndex = 0; triangleIndex < obj.Triangles.Count; triangleIndex++)
@@ -2875,15 +3282,68 @@ public partial class MainWindow : Window
                 var a = obj.Vertices[triangle.A];
                 var b = obj.Vertices[triangle.B];
                 var c = obj.Vertices[triangle.C];
+
+                // The parent mesh can contain a single huge triangle.  Looking
+                // only at its centre/vertices misses a small cursor in its
+                // interior, so test the projected triangle itself before it is
+                // locally subdivided.
+                if (!precise && TryCoarseStrokeHit(a, b, c, centers, radius, projection, out var coarseScreen, out var coarseDepth))
+                {
+                    var coarseX = (int)(coarseScreen.X / cellSize);
+                    var coarseY = (int)(coarseScreen.Y / cellSize);
+                    if ((uint)coarseX < (uint)gridWidth && (uint)coarseY < (uint)gridHeight)
+                    {
+                        var coarseCell = coarseY * gridWidth + coarseX;
+                        var coarseKey = (obj.Index, triangleIndex);
+                        if (added.Add(coarseKey))
+                        {
+                            candidates.Add(new PaintCandidate(obj.Index, triangleIndex, coarseCell, coarseDepth));
+                            if (coarseDepth < nearestDepth[coarseCell]) nearestDepth[coarseCell] = coarseDepth;
+                        }
+                    }
+                    continue;
+                }
+
                 var center = new Point3D((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
-                if (!TryProjectPoint(center, projection, out var screen, out var depth)) continue;
-                var x = (int)(screen.X / cellSize);
-                var y = (int)(screen.Y / cellSize);
-                if ((uint)x >= (uint)gridWidth || (uint)y >= (uint)gridHeight) continue;
-                var cell = y * gridWidth + x;
-                if (!mask[cell]) continue;
-                candidates.Add(new PaintCandidate(obj.Index, triangleIndex, cell, depth));
-                if (depth < nearestDepth[cell]) nearestDepth[cell] = depth;
+                // Coarse pass deliberately catches every parent face touched by
+                // the cursor. Once it has been subdivided, however, checking a
+                // shared vertex paints a fan of neighbouring fragments. The
+                // precise pass therefore uses the fragment centre only.
+                var samples = precise
+                    ? new[] { center }
+                    : new[]
+                    {
+                        center,
+                        new Point3D(a.X, a.Y, a.Z), new Point3D(b.X, b.Y, b.Z), new Point3D(c.X, c.Y, c.Z),
+                        new Point3D((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2),
+                        new Point3D((b.X + c.X) / 2, (b.Y + c.Y) / 2, (b.Z + c.Z) / 2),
+                        new Point3D((c.X + a.X) / 2, (c.Y + a.Y) / 2, (c.Z + a.Z) / 2),
+                    };
+
+                // Use the first sample that hits the mask for depth and cell
+                var found = false;
+                double bestDepth = 0;
+                int bestCell = 0;
+                foreach (var sample in samples)
+                {
+                    if (!TryProjectPoint(sample, projection, out var screen, out var depth)) continue;
+                    var x = (int)(screen.X / cellSize);
+                    var y = (int)(screen.Y / cellSize);
+                    if ((uint)x >= (uint)gridWidth || (uint)y >= (uint)gridHeight) continue;
+                    var cell = y * gridWidth + x;
+                    if (!mask[cell]) continue;
+                    bestDepth = depth;
+                    bestCell = cell;
+                    found = true;
+                    break;
+                }
+                if (!found) continue;
+
+                var key = (obj.Index, triangleIndex);
+                if (added.Contains(key)) continue;
+                added.Add(key);
+                candidates.Add(new PaintCandidate(obj.Index, triangleIndex, bestCell, bestDepth));
+                if (bestDepth < nearestDepth[bestCell]) nearestDepth[bestCell] = bestDepth;
             }
         }
 
@@ -2904,11 +3364,101 @@ public partial class MainWindow : Window
         return result;
     }
 
+    static bool TryCoarseStrokeHit(
+        Vertex a, Vertex b, Vertex c,
+        IReadOnlyList<System.Windows.Point> centers,
+        double radius,
+        PaintProjection projection,
+        out System.Windows.Point screen,
+        out double depth)
+    {
+        screen = default;
+        depth = 0;
+        if (!TryProjectPoint(new Point3D(a.X, a.Y, a.Z), projection, out var pa, out _) ||
+            !TryProjectPoint(new Point3D(b.X, b.Y, b.Z), projection, out var pb, out _) ||
+            !TryProjectPoint(new Point3D(c.X, c.Y, c.Z), projection, out var pc, out _)) return false;
+        var center = new Point3D((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
+        if (!TryProjectPoint(center, projection, out _, out depth)) return false;
+        foreach (var cursor in centers)
+        {
+            if (PointInTriangle(cursor, pa, pb, pc) ||
+                DistanceToSegment(cursor, pa, pb) <= radius ||
+                DistanceToSegment(cursor, pb, pc) <= radius ||
+                DistanceToSegment(cursor, pc, pa) <= radius)
+            {
+                screen = cursor;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool PointInTriangle(System.Windows.Point point, System.Windows.Point a, System.Windows.Point b, System.Windows.Point c)
+    {
+        static double Cross(System.Windows.Point p, System.Windows.Point q, System.Windows.Point r) => (q.X - p.X) * (r.Y - p.Y) - (q.Y - p.Y) * (r.X - p.X);
+        var ab = Cross(a, b, point); var bc = Cross(b, c, point); var ca = Cross(c, a, point);
+        return (ab >= 0 && bc >= 0 && ca >= 0) || (ab <= 0 && bc <= 0 && ca <= 0);
+    }
+
+    static double DistanceToSegment(System.Windows.Point point, System.Windows.Point a, System.Windows.Point b)
+    {
+        var dx = b.X - a.X; var dy = b.Y - a.Y;
+        var lengthSquared = dx * dx + dy * dy;
+        if (lengthSquared < 1e-12) return (point - a).Length;
+        var t = Math.Clamp(((point.X - a.X) * dx + (point.Y - a.Y) * dy) / lengthSquared, 0, 1);
+        return (point - new System.Windows.Point(a.X + dx * t, a.Y + dy * t)).Length;
+    }
+
+    internal static HashSet<int> SelectVisibleTrianglesByHeight(
+        ModelDocument document,
+        int targetObjectIndex,
+        double height,
+        double halfRange,
+        PaintProjection projection)
+    {
+        var result = new HashSet<int>();
+        if (halfRange <= 0 || projection.Width <= 0 || projection.Height <= 0) return result;
+        const int cellSize = 8;
+        var width = Math.Max(1, (int)Math.Ceiling(projection.Width / cellSize));
+        var heightCells = Math.Max(1, (int)Math.Ceiling(projection.Height / cellSize));
+        var nearest = Enumerable.Repeat(double.PositiveInfinity, width * heightCells).ToArray();
+        var candidates = new List<(int Triangle, int Cell, double Depth)>();
+        foreach (var obj in document.Objects)
+            for (var index = 0; index < obj.Triangles.Count; index++)
+            {
+                var triangle = obj.Triangles[index];
+                var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
+                var center = new Point3D((a.X + b.X + c.X) / 3d, (a.Y + b.Y + c.Y) / 3d, (a.Z + b.Z + c.Z) / 3d);
+                if (!TryProjectPoint(center, projection, out var screen, out var depth)) continue;
+                var x = (int)(screen.X / cellSize); var y = (int)(screen.Y / cellSize);
+                if ((uint)x >= (uint)width || (uint)y >= (uint)heightCells) continue;
+                var cell = y * width + x;
+                nearest[cell] = Math.Min(nearest[cell], depth);
+                if (obj.Index == targetObjectIndex && Math.Abs(center.Z - height) <= halfRange)
+                    candidates.Add((index, cell, depth));
+            }
+        foreach (var candidate in candidates)
+        {
+            var cellX = candidate.Cell % width;
+            var cellY = candidate.Cell / width;
+            var visibleDepth = nearest[candidate.Cell];
+            // Perspective makes the centroid of a rear face shift a few
+            // pixels. Inspect neighbouring depth cells too, otherwise a face
+            // hidden behind the visible skin can leak into the height preview.
+            for (var y = Math.Max(0, cellY - 1); y <= Math.Min(heightCells - 1, cellY + 1); y++)
+                for (var x = Math.Max(0, cellX - 1); x <= Math.Min(width - 1, cellX + 1); x++)
+                    visibleDepth = Math.Min(visibleDepth, nearest[y * width + x]);
+            if (candidate.Depth <= visibleDepth + Math.Max(.001, visibleDepth * .006)) result.Add(candidate.Triangle);
+        }
+        return result;
+    }
+
     internal static Dictionary<int, HashSet<int>> SelectTrianglesFromScreenRegion(
         ModelDocument document,
         IReadOnlyList<System.Windows.Point> points,
         bool rectangle,
-        PaintProjection projection)
+        PaintProjection projection,
+        bool precise = false)
     {
         var result = new Dictionary<int, HashSet<int>>();
         if (points.Count < 2 || projection.Width <= 0 || projection.Height <= 0) return result;
@@ -2922,6 +3472,7 @@ public partial class MainWindow : Window
         if (polygon.Count < 3) return result;
 
         var candidates = new List<(int Object, int Triangle, System.Windows.Point Screen, double Depth)>();
+        var added = new HashSet<(int Object, int Triangle)>();
         const int cellSize = 3;
         var gridWidth = Math.Max(1, (int)Math.Ceiling(projection.Width / cellSize));
         var gridHeight = Math.Max(1, (int)Math.Ceiling(projection.Height / cellSize));
@@ -2931,13 +3482,41 @@ public partial class MainWindow : Window
             {
                 var triangle = obj.Triangles[triangleIndex];
                 var a = obj.Vertices[triangle.A]; var b = obj.Vertices[triangle.B]; var c = obj.Vertices[triangle.C];
+
                 var center = new Point3D((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3);
-                if (!TryProjectPoint(center, projection, out var screen, out var depth) || !PointInPolygon(screen, polygon)) continue;
-                var x = (int)(screen.X / cellSize); var y = (int)(screen.Y / cellSize);
-                if ((uint)x >= (uint)gridWidth || (uint)y >= (uint)gridHeight) continue;
-                var cell = y * gridWidth + x;
-                nearestDepth[cell] = Math.Min(nearestDepth[cell], depth);
-                candidates.Add((obj.Index, triangleIndex, screen, depth));
+                var samples = precise
+                    ? new[] { center }
+                    : new[]
+                    {
+                        center,
+                        new Point3D(a.X, a.Y, a.Z), new Point3D(b.X, b.Y, b.Z), new Point3D(c.X, c.Y, c.Z),
+                        new Point3D((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2),
+                        new Point3D((b.X + c.X) / 2, (b.Y + c.Y) / 2, (b.Z + c.Z) / 2),
+                        new Point3D((c.X + a.X) / 2, (c.Y + a.Y) / 2, (c.Z + a.Z) / 2),
+                    };
+
+                var found = false;
+                System.Windows.Point bestScreen = default;
+                double bestDepth = 0;
+                foreach (var sample in samples)
+                {
+                    if (!TryProjectPoint(sample, projection, out var screen, out var depth) || !PointInPolygon(screen, polygon)) continue;
+                    bestScreen = screen;
+                    bestDepth = depth;
+                    found = true;
+                    break;
+                }
+                if (!found) continue;
+
+                var key = (obj.Index, triangleIndex);
+                if (added.Contains(key)) continue;
+                added.Add(key);
+
+                var sx = (int)(bestScreen.X / cellSize); var sy = (int)(bestScreen.Y / cellSize);
+                if ((uint)sx >= (uint)gridWidth || (uint)sy >= (uint)gridHeight) continue;
+                var cell = sy * gridWidth + sx;
+                nearestDepth[cell] = Math.Min(nearestDepth[cell], bestDepth);
+                candidates.Add((obj.Index, triangleIndex, bestScreen, bestDepth));
             }
         foreach (var candidate in candidates)
         {
@@ -3083,6 +3662,11 @@ public partial class MainWindow : Window
         if (!_settingsExistedAtStartup) return;
         var current = UpdateService.CurrentVersion().ToString(3);
         if (string.Equals(_settings.LastSeenVersion, current, StringComparison.OrdinalIgnoreCase)) return;
+        // Only show when upgrading (saved version < current). Prevents old installed
+        // versions from triggering the popup every time they overwrite LastSeenVersion.
+        if (Version.TryParse(_settings.LastSeenVersion, out var savedVersion) &&
+            Version.TryParse(current, out var currentVersion) &&
+            savedVersion >= currentVersion) return;
         var notes = string.Equals(_settings.PendingUpdateVersion, current, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(_settings.PendingUpdateNotes)
             ? _settings.PendingUpdateNotes
             : UpdateService.BundledReleaseNotes;
@@ -3152,6 +3736,7 @@ public partial class MainWindow : Window
     }
     async void Update_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(false);
 
+
     async Task CheckForUpdatesAsync(bool automatic)
     {
         if (!automatic) { IsEnabled = false; StatusText.Text = "Recherche d’une mise à jour…"; SetActivity(true, "Recherche d’une mise à jour…"); }
@@ -3191,7 +3776,22 @@ public partial class MainWindow : Window
         finally { IsEnabled = true; SetActivity(false); }
     }
     void About_Click(object sender, RoutedEventArgs e) => new AboutWindow { Owner = this }.ShowDialog();
-    void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if (_activePatternEditor is not null || (Keyboard.Modifiers & ModifierKeys.Control) == 0) return; if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e); }
+    void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (_activePatternEditor is not null) return;
+        // Familiar paint shortcuts: [ and ] change the real visible brush
+        // diameter before the next stroke.
+        if (e.Key is Key.OemOpenBrackets or Key.OemCloseBrackets)
+        {
+            var delta = e.Key == Key.OemOpenBrackets ? -1 : 1;
+            PaintBrushSize.SelectedIndex = Math.Clamp(PaintBrushSize.SelectedIndex + delta, 0, PaintBrushSize.Items.Count - 1);
+            StatusText.Text = $"Taille du pinceau : {((ComboBoxItem)PaintBrushSize.SelectedItem).Content}.";
+            e.Handled = true;
+            return;
+        }
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+        if (e.Key == Key.O) Import_Click(sender, e); else if (e.Key == Key.S) SaveProject_Click(sender, e); else if (e.Key == Key.E) Export_Click(sender, e); else if (e.Key == Key.Z) Undo_Click(sender, e); else if (e.Key == Key.Y) Redo_Click(sender, e); else if (e.Key == Key.N) New_Click(sender, e);
+    }
     void Window_Closing(object? sender, CancelEventArgs e) { if (!_shutdownForUpdate && !ConfirmDiscard()) e.Cancel = true; if (!e.Cancel) _gpuViewport.Dispose(); }
     void Quit_Click(object sender, RoutedEventArgs e) => Close();
 
