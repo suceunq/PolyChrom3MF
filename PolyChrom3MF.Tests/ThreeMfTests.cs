@@ -1,5 +1,6 @@
 using System.IO;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
 using System.Windows.Media;
@@ -11,6 +12,30 @@ namespace PolyChrom3MF.Tests;
 public class ThreeMfTests
 {
     const string Ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
+
+    static (string Json, string PublicKey) SignedUpdateManifest(
+        string releaseUrl = "https://github.com/suceunq/PolyChrom3MF/releases/tag/v2.4.1")
+    {
+        var unsigned = JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            version = "2.4.1",
+            tag = "v2.4.1",
+            releaseUrl,
+            installerUrl = "https://github.com/suceunq/PolyChrom3MF/releases/download/v2.4.1/PolyChrom3MF_Setup_x64.exe",
+            installerSha256 = new string('A', 64),
+            installerSize = 123456,
+            publishedAtUtc = DateTimeOffset.UtcNow.ToString("O"),
+            minimumSupportedVersion = "1.0.0",
+            releaseNotes = "## Nouveautés\n- Projets portables"
+        });
+        using var document = JsonDocument.Parse(unsigned);
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var signature = key.SignData(UpdateService.CanonicalManifestPayload(document.RootElement), HashAlgorithmName.SHA256);
+        var values = JsonSerializer.Deserialize<Dictionary<string, object>>(unsigned)!;
+        values["signature"] = Convert.ToBase64String(signature);
+        return (JsonSerializer.Serialize(values), Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()));
+    }
 
     [Fact]
     public void Nouveau_module_images_et_logos_est_active_apres_validation_du_noyau()
@@ -189,6 +214,30 @@ public class ThreeMfTests
     }
     [Fact] public void Exporte_deux_couleurs_reelles() { var service = new ThreeMfService(); var document = service.Read(Sample(2)); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, new PaletteService().Create(document, colorCount: 2)[0], output); Assert.Equal(2, service.Read(output).ExistingColorCount); }
     [Fact] public void Exporte_huit_couleurs_reelles() { var service = new ThreeMfService(); var document = service.Read(Sample(8)); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, new PaletteService().Create(document, fun: true, colorCount: 8)[0], output); Assert.Equal(8, service.Read(output).ExistingColorCount); }
+    [Fact] public void Importe_les_couleurs_standard_selon_leur_ressource()
+    {
+        XNamespace ns = Ns;
+        var resources = new XElement(ns + "resources",
+            new XElement(ns + "basematerials", new XAttribute("id", 5),
+                new XElement(ns + "base", new XAttribute("name", "Rouge"), new XAttribute("displaycolor", "#DE4343FF"))),
+            new XElement(ns + "basematerials", new XAttribute("id", 9),
+                new XElement(ns + "base", new XAttribute("name", "Noir"), new XAttribute("displaycolor", "#000000"))),
+            new XElement(ns + "object", new XAttribute("id", 1), new XAttribute("type", "model"),
+                new XElement(ns + "mesh",
+                    new XElement(ns + "vertices",
+                        new XElement(ns + "vertex", new XAttribute("x", 0), new XAttribute("y", 0), new XAttribute("z", 0)),
+                        new XElement(ns + "vertex", new XAttribute("x", 10), new XAttribute("y", 0), new XAttribute("z", 0)),
+                        new XElement(ns + "vertex", new XAttribute("x", 0), new XAttribute("y", 10), new XAttribute("z", 0)),
+                        new XElement(ns + "vertex", new XAttribute("x", 10), new XAttribute("y", 10), new XAttribute("z", 0))),
+                    new XElement(ns + "triangles",
+                        new XElement(ns + "triangle", new XAttribute("v1", 0), new XAttribute("v2", 1), new XAttribute("v3", 2), new XAttribute("pid", 5), new XAttribute("p1", 0)),
+                        new XElement(ns + "triangle", new XAttribute("v1", 1), new XAttribute("v2", 3), new XAttribute("v3", 2), new XAttribute("pid", 9), new XAttribute("p1", 0))))));
+        var model = new XDocument(new XElement(ns + "model", new XAttribute("unit", "millimeter"), resources,
+            new XElement(ns + "build", new XElement(ns + "item", new XAttribute("objectid", 1)))));
+        var document = new ThreeMfService().Read(Archive(model));
+        Assert.Equal(["#DE4343", "#000000"], document.OriginalColors!.Select(color => color.Hex));
+        Assert.Equal([0, 1], document.OriginalTriangleAssignments![0]);
+    }
     [Fact] public void Exporte_la_peinture_multimateriau_pour_orca_prusa_bambu_snapmaker_et_le_standard_3mf() { var service = new ThreeMfService(); var document = service.Read(Sample(2)); var proposal = new PaletteService().Create(document, colorCount: 2)[0] with { TriangleAssignments = new Dictionary<int, int[]> { [0] = [1], [1] = [0] } }; var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); service.Export(document, proposal, output); using var zip = ZipFile.OpenRead(output); using var firstStream = zip.GetEntry("3D/Objects/object_1.model")!.Open(); var first = XDocument.Load(firstStream); using var secondStream = zip.GetEntry("3D/Objects/object_2.model")!.Open(); var second = XDocument.Load(secondStream); var firstTriangle = first.Descendants(ThreeMfService.Core + "triangle").Single(); var secondTriangle = second.Descendants(ThreeMfService.Core + "triangle").Single(); Assert.Equal("8", (string?)firstTriangle.Attribute(ThreeMfService.Slic3rPe + "mmu_segmentation")); Assert.Null(secondTriangle.Attribute(ThreeMfService.Slic3rPe + "mmu_segmentation")); Assert.Equal("8", (string?)firstTriangle.Attribute("paint_color")); Assert.Equal("4", (string?)secondTriangle.Attribute("paint_color")); Assert.Equal("1", (string?)firstTriangle.Attribute("p1")); using var mainStream = zip.GetEntry("3D/3dmodel.model")!.Open(); var main = XDocument.Load(mainStream); Assert.Contains(main.Descendants(ThreeMfService.Core + "metadata"), x => (string?)x.Attribute("name") == "slic3rpe:MmPaintingVersion" && x.Value == "1"); Assert.NotNull(zip.GetEntry("Metadata/model_settings.config")); Assert.NotNull(zip.GetEntry("Metadata/project_settings.config")); }
     [Fact] public void Exporte_des_parametres_valides_et_portables_pour_les_slicers()
     {
@@ -330,7 +379,9 @@ public class ThreeMfTests
     [Fact] public void Parametres_corrompus_sont_assainis() { var settings = new AppSettings { Theme = "inconnu", ExportFolder = "", PreferredSlicer = null!, ColorCount = 99, FilamentColors = ["incorrect", "#aabbcc", "#AABBCC"], FilamentMaterials = ["petg", "ABS"] }; SettingsService.Normalize(settings); Assert.Equal("Sombre", settings.Theme); Assert.Equal(32, settings.ColorCount); Assert.Equal("", settings.PreferredSlicer); Assert.Equal(["#AABBCC", "#AABBCC"], settings.FilamentColors); Assert.Equal(["PETG", "PLA"], settings.FilamentMaterials); Assert.False(string.IsNullOrWhiteSpace(settings.ExportFolder)); }
     [Fact] public void Refuse_un_projet_aux_couleurs_invalides() { var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); File.WriteAllText(path, "{\"SourcePath\":\"x.3mf\",\"SelectedProposal\":0,\"Proposals\":[[\"danger\",\"#000000\",\"#111111\",\"#222222\"]],\"Assignments\":[],\"Yaw\":0,\"Pitch\":0,\"Zoom\":1,\"Generation\":0,\"ColorCount\":4}"); Assert.Throws<InvalidDataException>(() => new ProjectService().Load(path)); }
     [Fact] public void Refuse_un_projet_aux_listes_absentes() { var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".poly3mf"); File.WriteAllText(path, "{\"SourcePath\":\"x.3mf\",\"SelectedProposal\":0,\"Proposals\":null,\"Assignments\":null,\"Yaw\":0,\"Pitch\":0,\"Zoom\":1,\"Generation\":0,\"ColorCount\":4}"); Assert.Throws<InvalidDataException>(() => new ProjectService().Load(path)); }
-    [Fact] public void Analyse_une_release_github_securisee() { var update = UpdateService.ParseRelease("{\"tag_name\":\"v2.4.1\",\"html_url\":\"https://github.com/suceunq/PolyChrom3MF/releases/tag/v2.4.1\",\"body\":\"## Nouveautés\\n- Projets portables\",\"assets\":[{\"name\":\"PolyChrom3MF_Setup_x64.exe\",\"browser_download_url\":\"https://github.com/suceunq/PolyChrom3MF/releases/download/v2.4.1/PolyChrom3MF_Setup_x64.exe\",\"digest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"size\":123456}]}"); Assert.Equal(new Version(2, 4, 1), update.Version); Assert.Equal("v2.4.1", update.Tag); Assert.Equal(123456, update.Size); Assert.Contains("Projets portables", update.ReleaseNotes); }
+    [Fact] public void Analyse_un_manifeste_de_mise_a_jour_signe() { var signed = SignedUpdateManifest(); var update = UpdateService.ParseSignedManifest(signed.Json, signed.PublicKey); Assert.Equal(new Version(2, 4, 1), update.Version); Assert.Equal("v2.4.1", update.Tag); Assert.Equal(123456, update.Size); Assert.Contains("Projets portables", update.ReleaseNotes); }
+    [Fact] public void Refuse_un_manifeste_modifie_apres_signature() { var signed = SignedUpdateManifest(); var altered = signed.Json.Replace("Projets portables", "Code malveillant", StringComparison.Ordinal); Assert.Throws<InvalidDataException>(() => UpdateService.ParseSignedManifest(altered, signed.PublicKey)); }
+    [Fact] public void Refuse_un_manifeste_signe_pointant_vers_un_autre_depot() { var signed = SignedUpdateManifest("https://github.com/intrus/logiciel/releases/tag/v2.4.1"); Assert.Throws<InvalidDataException>(() => UpdateService.ParseSignedManifest(signed.Json, signed.PublicKey)); }
     [Fact] public void Compare_signature_mise_a_jour_sans_fuite_temporelle() { Assert.True(UpdateService.DigestMatches(new string('A', 64), new string('a', 64))); Assert.False(UpdateService.DigestMatches(new string('A', 64), new string('B', 64))); }
     [Fact] public void Resume_de_mise_a_jour_possede_un_texte_de_secours() { Assert.False(string.IsNullOrWhiteSpace(UpdateService.ReleaseSummary("**Full Changelog**: https://github.com/exemple"))); }
     [Fact] public void Lien_de_don_paypal_est_officiel_et_securise() { Assert.True(DonationService.IsOfficialPayPalUrl(DonationService.DonationUrl)); Assert.True(DonationService.IsOfficialPayPalUrl("https://paypal.me/exemple")); Assert.False(DonationService.IsOfficialPayPalUrl("http://paypal.me/exemple")); Assert.False(DonationService.IsOfficialPayPalUrl("https://paypal.com.exemple.org/donate")); Assert.False(DonationService.IsOfficialPayPalUrl("https://www.paypal.com/signin")); }
@@ -408,6 +459,63 @@ public class ThreeMfTests
     [Fact] public void Pinceau_interpole_un_trait_sans_trou() { var points = MainWindow.BrushStrokeCenters(new(0, 0), new(100, 0), 5); Assert.Equal(new System.Windows.Point(0, 0), points[0]); Assert.Equal(new System.Windows.Point(100, 0), points[^1]); Assert.All(points.Zip(points.Skip(1)), pair => Assert.InRange((pair.Second - pair.First).Length, 0, 5.001)); }
     [Fact] public void Pinceau_projette_le_centre_de_la_vue() { var projection = new MainWindow.PaintProjection(new(0, -10, 0), new(0, 1, 0), new(0, 0, 1), new(1, 0, 0), true, 60, 800, 600); Assert.True(MainWindow.TryProjectPoint(new(0, 0, 0), projection, out var screen, out _)); Assert.Equal(400, screen.X, 6); Assert.Equal(300, screen.Y, 6); }
     [Fact] public void Pinceau_ne_traverse_pas_la_surface_visible() { var vertices = new List<Vertex> { new(-1, 0, -1), new(1, 0, -1), new(0, 0, 1), new(-1, 2, -1), new(1, 2, -1), new(0, 2, 1) }; var obj = new ModelObject(0, "1", vertices, [new(0, 1, 2), new(3, 4, 5)], "3D/3dmodel.model"); var document = new ModelDocument("", new System.Xml.Linq.XDocument(), "", [obj], 2, 2, 2, [], 2, null, "millimeter", 0, 0, "3MF"); var projection = new MainWindow.PaintProjection(new(0, -10, 0), new(0, 1, 0), new(0, 0, 1), new(1, 0, 0), true, 60, 800, 600); var selected = MainWindow.SelectTrianglesFromScreenStroke(document, [new(400, 316)], 20, projection); Assert.Contains(0, selected[0]); Assert.DoesNotContain(1, selected[0]); }
+    [Fact] public void Petit_trait_sur_grand_triangle_ne_colore_pas_le_triangle_entier_apres_relachement()
+    {
+        // Regression test for the exact failure shown in the recording: the
+        // coarse hit finds a parent triangle, then only refined fragments whose
+        // centres lie under the stroke may be committed.
+        var source = new ModelObject(0, "grand", [new(-3, 0, -3), new(3, 0, -3), new(0, 0, 3)], [new(0, 1, 2)], "3D/3dmodel.model");
+        var projection = new MainWindow.PaintProjection(new(0, -10, 0), new(0, 1, 0), new(0, 0, 1), new(1, 0, 0), true, 60, 800, 600);
+        var coarseDocument = new ModelDocument("", new XDocument(), "", [source], 6, 1, 6, [], 1, null, "millimeter", 0, 0, "STL");
+        var coarse = MainWindow.SelectTrianglesFromScreenStroke(coarseDocument, [new(400, 300)], 20, projection);
+        Assert.Equal([0], coarse[0]);
+        var refinedObject = new AdaptiveSubdivisionService().Subdivide(source, coarse[0], 5).Object;
+        var refinedDocument = coarseDocument with { Objects = [refinedObject], TriangleCount = refinedObject.Triangles.Count };
+        var committed = MainWindow.SelectTrianglesFromScreenStroke(refinedDocument, [new(400, 300)], 20, projection, precise: true);
+        Assert.True(committed.TryGetValue(0, out var fragments));
+        Assert.NotEmpty(fragments!);
+        Assert.True(fragments!.Count < refinedObject.Triangles.Count / 4, "Un petit trait ne doit jamais recolorer le grand triangle complet.");
+        foreach (var index in fragments)
+        {
+            var triangle = refinedObject.Triangles[index];
+            var a = refinedObject.Vertices[triangle.A]; var b = refinedObject.Vertices[triangle.B]; var c = refinedObject.Vertices[triangle.C];
+            Assert.True(MainWindow.TryProjectPoint(new((a.X + b.X + c.X) / 3, (a.Y + b.Y + c.Y) / 3, (a.Z + b.Z + c.Z) / 3), projection, out var screen, out _));
+            Assert.InRange((screen - new System.Windows.Point(400, 300)).Length, 0, 23);
+        }
+    }
+    [Fact] public void Lasso_sur_maillage_raffine_ne_recolore_pas_tous_les_fragments_du_parent()
+    {
+        var source = new ModelObject(0, "grand", [new(-3, 0, -3), new(3, 0, -3), new(0, 0, 3)], [new(0, 1, 2)], "3D/3dmodel.model");
+        var projection = new MainWindow.PaintProjection(new(0, -10, 0), new(0, 1, 0), new(0, 0, 1), new(1, 0, 0), true, 60, 800, 600);
+        var document = new ModelDocument("", new XDocument(), "", [source], 6, 1, 6, [], 1, null, "millimeter", 0, 0, "STL");
+        var region = new System.Windows.Point[] { new(370, 340), new(430, 340), new(430, 400), new(370, 400) };
+        var coarse = MainWindow.SelectTrianglesFromScreenRegion(document, region, rectangle: false, projection);
+        Assert.Equal([0], coarse[0]);
+        var refined = new AdaptiveSubdivisionService().Subdivide(source, coarse[0], 5).Object;
+        var refinedDocument = document with { Objects = [refined], TriangleCount = refined.Triangles.Count };
+        var committed = MainWindow.SelectTrianglesFromScreenRegion(refinedDocument, region, rectangle: false, projection, precise: true);
+        Assert.True(committed.TryGetValue(0, out var fragments));
+        Assert.NotEmpty(fragments!);
+        Assert.True(fragments!.Count < refined.Triangles.Count / 4);
+    }
+    [Fact] public void Apercu_plage_hauteur_ignore_la_face_cachee()
+    {
+        var front = new ModelObject(0, "front", [new(-1, 0, -1), new(1, 0, -1), new(0, 0, 1)], [new(0, 1, 2)], "3D/a.model");
+        var back = new ModelObject(1, "back", [new(-1, 2, -1), new(1, 2, -1), new(0, 2, 1)], [new(0, 1, 2)], "3D/b.model");
+        var document = new ModelDocument("", new XDocument(), "", [front, back], 2, 2, 2, [], 2, null, "millimeter", 0, 0, "3MF");
+        var projection = new MainWindow.PaintProjection(new(0, -10, 0), new(0, 1, 0), new(0, 0, 1), new(1, 0, 0), true, 60, 800, 600);
+        Assert.Contains(0, MainWindow.SelectVisibleTrianglesByHeight(document, 0, -1d / 3d, .1, projection));
+        Assert.Empty(MainWindow.SelectVisibleTrianglesByHeight(document, 1, -1d / 3d, .1, projection));
+    }
+    [Fact] public void Subdivision_de_peinture_respecte_le_budget_memoire()
+    {
+        Assert.Equal(0, MainWindow.PaintRefinementLevels(800_000, 10, 1));
+        Assert.Equal(0, MainWindow.PaintRefinementLevels(100_000, 10, 0));
+        var levels = MainWindow.PaintRefinementLevels(100_000, 1_999, 1);
+        var growth = 1_999L * ((1L << (levels * 2)) - 1);
+        Assert.InRange(growth, 1, 250_000);
+        Assert.True(100_000 + growth <= 750_000);
+    }
     [Fact] public void Apercu_adaptatif_conserve_un_maillage_valide_et_les_indices_source() { var original = FunDocument().Objects[0]; var source = original with { Triangles = Enumerable.Range(0, 5).SelectMany(_ => original.Triangles).ToList() }; var preview = MainWindow.SimplifyForPreview(source, 200); Assert.NotEmpty(preview.Triangles); Assert.True(preview.Triangles.Count < source.Triangles.Count); Assert.All(preview.Triangles, triangle => { Assert.InRange(triangle.A, 0, preview.Vertices.Count - 1); Assert.InRange(triangle.B, 0, preview.Vertices.Count - 1); Assert.InRange(triangle.C, 0, preview.Vertices.Count - 1); Assert.InRange(triangle.SourceIndex, 0, source.Triangles.Count - 1); }); }
     [Fact] public void Subdivision_locale_est_non_destructive_et_conforme()
     {
@@ -590,4 +698,18 @@ public class ThreeMfTests
     [Fact] public void Importe_stl_ascii() { var d = new StlService().Read(AsciiStl()); Assert.Equal("STL", d.SourceFormat); Assert.Equal(1, d.TriangleCount); Assert.Equal(10, d.SizeX); }
     [Fact] public void Importe_stl_binaire() { var d = new StlService().Read(BinaryStl()); Assert.Equal(1, d.TriangleCount); Assert.Equal(3, d.Objects[0].Vertices.Count); }
     [Fact] public void Convertit_stl_en_3mf_valide() { var d = new StlService().Read(AsciiStl()); var output = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".3mf"); new ThreeMfService().Export(d, new PaletteService().Create(1)[0], output); Assert.Equal(1, new ThreeMfService().Read(output).TriangleCount); }
+    [Fact] public void Lit_couleurs_originales_bambu()
+    {
+        var path = @"E:\developpement\PolyPaint\.hermes\desktop-attachments\Gatto+Silvestro-2.3mf";
+        if (!File.Exists(path)) return; // skip if file not present
+        var doc = new ThreeMfService().Read(path);
+        Assert.NotNull(doc.OriginalColors);
+        Assert.NotEmpty(doc.OriginalColors);
+        Assert.NotNull(doc.OriginalTriangleAssignments);
+        Assert.NotEmpty(doc.OriginalTriangleAssignments);
+        var colors = doc.OriginalColors.Select(c => c.Hex).ToList();
+        Assert.Contains("#FFFFFF", colors);
+        Assert.Contains("#000000", colors);
+        Assert.Contains("#DE4343", colors);
+    }
 }

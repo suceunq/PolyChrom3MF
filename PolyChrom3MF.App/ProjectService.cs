@@ -12,6 +12,11 @@ public sealed record ProjectData(string SourcePath, int SelectedProposal, List<L
 
 public sealed class ProjectService
 {
+    static readonly JsonSerializerOptions ProjectJsonOptions = new()
+    {
+        MaxDepth = 128
+    };
+
     public void Save(string path, ModelDocument document, IReadOnlyList<ColorProposal> proposals, int selected, double yaw, double pitch, double zoom, int generation = 0, bool funMode = false, int colorCount = 4, PatternSettings? pattern = null, IReadOnlyList<IReadOnlyList<ColorLayer>>? layers = null, IReadOnlyList<ColorProposal>? layerBases = null, LogoProject? logoProject = null)
     {
         if (!File.Exists(document.Path)) throw new FileNotFoundException("Le modèle 3D source est introuvable.", document.Path);
@@ -77,7 +82,7 @@ public sealed class ProjectService
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create))
             {
                 var settings = archive.CreateEntry("project.json", CompressionLevel.Optimal);
-                using (var stream = settings.Open()) JsonSerializer.Serialize(stream, data);
+                using (var stream = settings.Open()) JsonSerializer.Serialize(stream, data, ProjectJsonOptions);
                 var model = archive.CreateEntry(modelEntryName, extension == ".3mf" ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
                 using (var source = new FileStream(modelSource, FileMode.Open, FileAccess.Read, FileShare.Read))
                 using (var destination = model.Open()) source.CopyTo(destination);
@@ -123,10 +128,17 @@ public sealed class ProjectService
     static ProjectData LoadPortable(string projectPath, Stream input)
     {
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
+        if (archive.Entries.Count is < 2 or > 10_002)
+            throw new InvalidDataException("Le projet PolyChrom contient un nombre anormal de fichiers.");
+        if (archive.Entries.Select(entry => entry.FullName).Distinct(StringComparer.Ordinal).Count() != archive.Entries.Count)
+            throw new InvalidDataException("Le projet PolyChrom contient des chemins dupliqués.");
         var settings = archive.GetEntry("project.json") ?? throw new InvalidDataException("Les réglages du projet sont absents.");
-        if (settings.Length <= 0) throw new InvalidDataException("Les réglages du projet sont invalides.");
+        if (settings.Length <= 0 || settings.Length > int.MaxValue)
+            throw new InvalidDataException("Les réglages du projet sont invalides.");
         ProjectData data;
-        using (var stream = settings.Open()) data = JsonSerializer.Deserialize<ProjectData>(stream) ?? throw new InvalidDataException("Projet PolyChrom invalide.");
+        using (var stream = settings.Open())
+            data = JsonSerializer.Deserialize<ProjectData>(stream, ProjectJsonOptions)
+                   ?? throw new InvalidDataException("Projet PolyChrom invalide.");
         Validate(data);
         var referencedPatterns = new HashSet<string>(StringComparer.Ordinal);
         if (data.Pattern is not null) referencedPatterns.Add(data.Pattern.ImagePath);
@@ -137,7 +149,7 @@ public sealed class ProjectService
             if (entryPath != "pattern/motif.png" && !Regex.IsMatch(entryPath, "^pattern/motif-[0-9]{3}\\.png$", RegexOptions.CultureInvariant))
                 throw new InvalidDataException("Le chemin d’un motif intégré est invalide.");
         var allowedEntries = new HashSet<string>(referencedPatterns, StringComparer.Ordinal) { "project.json", data.SourcePath };
-        if (archive.Entries.Any(entry => !allowedEntries.Contains(entry.FullName)) || archive.Entries.Select(entry => entry.FullName).Distinct(StringComparer.Ordinal).Count() != archive.Entries.Count ||
+        if (archive.Entries.Any(entry => !allowedEntries.Contains(entry.FullName)) ||
             archive.Entries.Count != allowedEntries.Count)
             throw new InvalidDataException("Le projet PolyChrom contient des fichiers inattendus.");
 
@@ -156,7 +168,8 @@ public sealed class ProjectService
         foreach (var entryPath in referencedPatterns)
         {
             var patternEntry = archive.GetEntry(entryPath);
-            if (patternEntry is null || patternEntry.Length <= 0) throw new InvalidDataException("Le motif PNG intégré est absent.");
+            if (patternEntry is null || patternEntry.Length <= 0 || patternEntry.Length > int.MaxValue)
+                throw new InvalidDataException("Le motif PNG intégré est absent ou trop volumineux.");
             var patternPath = Path.Combine(folder, Path.GetFileName(entryPath));
             Extract(patternEntry, patternPath);
             extractedPatterns[entryPath] = patternPath;
@@ -171,11 +184,30 @@ public sealed class ProjectService
 
     static void Extract(ZipArchiveEntry entry, string destinationPath)
     {
+        var root = Path.GetPathRoot(Path.GetFullPath(destinationPath));
+        if (!string.IsNullOrEmpty(root))
+        {
+            var available = new DriveInfo(root).AvailableFreeSpace;
+            if (entry.Length > available - Math.Min(available, 64L * 1024 * 1024))
+                throw new IOException("Espace disque insuffisant pour extraire le projet.");
+        }
         var temporary = destinationPath + ".tmp";
         try
         {
             using (var source = entry.Open())
-            using (var destination = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None)) source.CopyTo(destination);
+            using (var destination = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                var buffer = new byte[128 * 1024];
+                long written = 0;
+                int read;
+                while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    written += read;
+                    if (written > entry.Length) throw new InvalidDataException("Une entrée du projet dépasse sa taille annoncée.");
+                    destination.Write(buffer, 0, read);
+                }
+                if (written != entry.Length) throw new InvalidDataException("Une entrée du projet est incomplète.");
+            }
             File.Move(temporary, destinationPath, true);
         }
         catch
@@ -187,7 +219,7 @@ public sealed class ProjectService
 
     static ProjectData LoadLegacy(Stream input)
     {
-        var data = JsonSerializer.Deserialize<ProjectData>(input) ?? throw new InvalidDataException("Projet PolyChrom invalide.");
+        var data = JsonSerializer.Deserialize<ProjectData>(input, ProjectJsonOptions) ?? throw new InvalidDataException("Projet PolyChrom invalide.");
         Validate(data);
         return data;
     }
