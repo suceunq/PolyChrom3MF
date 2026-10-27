@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.4
+
+- Interface plus premium : palette affinée, boutons, champs et listes redessinés, barres de défilement fines, barre de titre sombre et ouverture des fenêtres en fondu.
+- Aucun changement du comportement de coloration, d'import ou d'export.
+
 ## 2.1.1
 
 - Aperçu fidèle du fichier transparent directement dans le cadre de placement 3D.

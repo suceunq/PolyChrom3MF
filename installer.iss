@@ -1,8 +1,8 @@
 #ifndef AppPublishDir
-  #define AppPublishDir "publish\\PolyChrom3MF_2.1.3-final"
+  #define AppPublishDir "publish\\PolyChrom3MF_2.1.4-final"
 #endif
 #ifndef AppVersion
-  #define AppVersion "2.1.3"
+  #define AppVersion "2.1.4"
 #endif
 
 [Setup]

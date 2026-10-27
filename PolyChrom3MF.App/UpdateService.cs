@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -13,12 +13,10 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
-        "Import et peinture 3D haute fidélité 2.1.3.\n" +
-        "Les couleurs 3MF provenant de Bambu Studio, OrcaSlicer et des matériaux standard sont conservées à l’identique.\n" +
-        "Le noir, le rouge et les autres filaments ne sont plus délavés dans l’aperçu.\n" +
-        "Les outils triangle, cercle, rectangle, lasso, sphère et plage de hauteur disposent d’une zone de surbrillance fiable.\n" +
-        "Le clic maintenu peint triangle par triangle sans recentrer la caméra.\n" +
-        "La subdivision et l’historique de peinture sont plafonnés pour réduire la mémoire et conserver une interface fluide.";
+        "Interface plus premium 2.1.4.\n" +
+        "Palette plus profonde, boutons, champs de saisie et listes redessinés avec survol et focus clavier visibles.\n" +
+        "Barres de défilement fines, info-bulles arrondies et barre de titre sombre sous Windows.\n" +
+        "Fenêtres qui apparaissent en fondu pour un rendu plus fluide.";
 
     const string ManifestUrl = "https://raw.githubusercontent.com/suceunq/PolyChrom3MF/main/latest.json";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";
