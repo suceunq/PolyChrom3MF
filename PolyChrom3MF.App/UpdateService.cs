@@ -13,18 +13,18 @@ public sealed record UpdateInfo(Version Version, string Tag, string ReleaseUrl, 
 public sealed class UpdateService
 {
     public const string BundledReleaseNotes =
-        "Interface plus premium 2.1.4.\n" +
-        "Palette plus profonde, boutons, champs de saisie et listes redessinés avec survol et focus clavier visibles.\n" +
-        "Barres de défilement fines, info-bulles arrondies et barre de titre sombre sous Windows.\n" +
+        "Chemin de mise à jour renouvelé 2.1.5.\n" +
+        "Les mises à jour automatiques reposent désormais sur une nouvelle clé de signature : les versions suivantes s'installeront seules.\n" +
+        "Interface plus premium : palette affinée, boutons, champs et listes redessinés, barre de titre sombre sous Windows.\n" +
         "Fenêtres qui apparaissent en fondu pour un rendu plus fluide.";
 
-    const string ManifestUrl = "https://raw.githubusercontent.com/suceunq/PolyChrom3MF/main/latest.json";
+    const string ManifestUrl = "https://raw.githubusercontent.com/suceunq/PolyChrom3MF/main/update.json";
     const string InstallerName = "PolyChrom3MF_Setup_x64.exe";
     const int ManifestSchemaVersion = 1;
     const int MaxManifestBytes = 256 * 1024;
     const long MaxInstallerBytes = 250L * 1024 * 1024;
     const string UpdatePublicKey =
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKClMkpR+nsPPMsp3Jpf4Rd4hmeOon2oK8nSEue8ETSWFkfkmiBTlvoPkex9ftmcqbO/awGeoOPI02mnI+VHy+Q==";
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERREFZMC5Lfgde0yMbyTsztJ0o1jL3rKO2iSP066ESQ02N8pP3qLXO9KWeb9LqCZkP6kEAMOLYGSEvTuSJth8OA==";
 
     readonly HttpClient _client;
 
@@ -41,7 +41,7 @@ public sealed class UpdateService
         timeout.CancelAfter(TimeSpan.FromSeconds(12));
         using var response = await _client.GetAsync(ManifestUrl, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
-        ValidateFinalResponseUri(response, "raw.githubusercontent.com", "/suceunq/PolyChrom3MF/main/latest.json");
+        ValidateFinalResponseUri(response, "raw.githubusercontent.com", "/suceunq/PolyChrom3MF/main/update.json");
         var json = await ReadLimitedContentAsync(response, MaxManifestBytes, timeout.Token);
         var latest = ParseSignedManifest(json);
         return latest.Version > CurrentVersion() ? latest : null;

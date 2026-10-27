@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
-// Génère et signe latest.json pour le système de mise à jour de PolyChrom 3MF.
+// Génère et signe update.json pour le système de mise à jour de PolyChrom 3MF.
 //
 // Utilisation (après la publication de la Release GitHub par le workflow) :
 //   dotnet run --project tools/SignUpdateManifest -- --version 2.1.4 --key chemin/cle-privee.pem
@@ -14,7 +14,7 @@ using System.Text.Json;
 //   --installer fichier local ou URL https de l'installateur (défaut : l'asset de la Release GitHub)
 //   --notes    fichier de notes (défaut : RELEASE_NOTES_<version>.md à la racine du dépôt)
 //   --minimum  version minimale pouvant se mettre à jour (défaut : 2.1.2)
-//   --out      fichier de sortie (défaut : latest.json)
+//   --out      fichier de sortie (défaut : update.json)
 //   --allow-other-key  autorise une clé différente de celle intégrée à l'application (tests uniquement)
 
 const string Repository = "suceunq/PolyChrom3MF";
@@ -22,7 +22,7 @@ const string InstallerName = "PolyChrom3MF_Setup_x64.exe";
 const long MaxInstallerBytes = 250L * 1024 * 1024;
 // Clé publique intégrée à UpdateService.cs : une signature faite avec une autre clé serait refusée par l'application.
 const string EmbeddedPublicKey =
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKClMkpR+nsPPMsp3Jpf4Rd4hmeOon2oK8nSEue8ETSWFkfkmiBTlvoPkex9ftmcqbO/awGeoOPI02mnI+VHy+Q==";
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERREFZMC5Lfgde0yMbyTsztJ0o1jL3rKO2iSP066ESQ02N8pP3qLXO9KWeb9LqCZkP6kEAMOLYGSEvTuSJth8OA==";
 
 try
 {
@@ -33,7 +33,7 @@ try
     var tag = $"v{parsed.ToString(3)}";
     var keyPath = Required(options, "key");
     var minimum = options.GetValueOrDefault("minimum", "2.1.2");
-    var output = options.GetValueOrDefault("out", "latest.json");
+    var output = options.GetValueOrDefault("out", "update.json");
     var notesPath = options.GetValueOrDefault("notes", $"RELEASE_NOTES_{parsed.ToString(3)}.md");
     var installer = options.GetValueOrDefault("installer", $"https://github.com/{Repository}/releases/download/{tag}/{InstallerName}");
 

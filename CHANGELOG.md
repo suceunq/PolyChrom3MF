@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.5
+
+- Nouvelle clé de signature des mises à jour et manifeste `update.json` signé et publié automatiquement par le workflow GitHub.
+- Les versions 2.1.3 et 2.1.4 doivent installer la 2.1.5 une fois à la main (ancienne clé de signature perdue) ; les suivantes se mettront à jour seules.
+- Interface plus premium (voir 2.1.4).
+
 ## 2.1.4
 
 - Interface plus premium : palette affinée, boutons, champs et listes redessinés, barres de défilement fines, barre de titre sombre et ouverture des fenêtres en fondu.

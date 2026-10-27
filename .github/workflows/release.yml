@@ -49,3 +49,36 @@ jobs:
         with:
           body_path: release-notes.md
           files: LIVRAISON_FINALE/Installateur/PolyChrom3MF_Setup_x64.exe
+
+      - name: Signer et publier le manifeste de mise à jour
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY)) {
+            throw "Secret UPDATE_SIGNING_KEY absent : le manifeste de mise à jour n'a pas été publié."
+          }
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          $keyPath = Join-Path $env:RUNNER_TEMP 'update-signing-key.pem'
+          $manifestPath = Join-Path $env:RUNNER_TEMP 'update.json'
+          Set-Content -LiteralPath $keyPath -Value $env:UPDATE_SIGNING_KEY -Encoding ascii
+          try {
+            dotnet run --project tools/SignUpdateManifest -c Release -- --version $version --key $keyPath --installer LIVRAISON_FINALE/Installateur/PolyChrom3MF_Setup_x64.exe --out $manifestPath
+            if ($LASTEXITCODE -ne 0) { throw "Signature du manifeste en échec." }
+          }
+          finally {
+            Remove-Item -LiteralPath $keyPath -Force -ErrorAction SilentlyContinue
+          }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          if ($LASTEXITCODE -ne 0) { throw "git fetch en échec." }
+          git checkout -B main origin/main
+          if ($LASTEXITCODE -ne 0) { throw "git checkout en échec." }
+          Copy-Item -LiteralPath $manifestPath -Destination update.json -Force
+          git add update.json
+          git commit -m "Publier le manifeste signé $version"
+          if ($LASTEXITCODE -ne 0) { throw "git commit en échec." }
+          git push origin main
+          if ($LASTEXITCODE -ne 0) { throw "git push du manifeste en échec." }
